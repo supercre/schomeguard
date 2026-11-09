@@ -20,7 +20,7 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
-$Version  = '1.2.1 (2026-11-09)'
+$Version  = '1.2.2 (2026-11-09)'
 $AppTitle = '슈크인 홈 PC 프로텍터'
 $PsExe    = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 
@@ -1700,12 +1700,20 @@ try {
 
     <!-- 본문 -->
     <!-- 취약 경고 띠 -->
-    <Border x:Name="Banner" Grid.Row="1" Visibility="Collapsed" Background="#FEE4E2" BorderBrush="#FDA29B" BorderThickness="0,0,0,1" Padding="24,10">
+    <StackPanel Grid.Row="1">
+    <Border x:Name="UpdBanner" Visibility="Collapsed" Background="#EFF4FF" BorderBrush="#B2CCFF" BorderThickness="0,0,0,1" Padding="24,10">
+      <DockPanel>
+        <Button x:Name="BtnRestart" DockPanel.Dock="Right" Style="{StaticResource Btn}" Content="지금 다시 시작" Margin="0"/>
+        <TextBlock x:Name="TxtUpdBanner" Foreground="#1D2939" FontWeight="SemiBold" VerticalAlignment="Center" TextWrapping="Wrap"/>
+      </DockPanel>
+    </Border>
+    <Border x:Name="Banner" Visibility="Collapsed" Background="#FEE4E2" BorderBrush="#FDA29B" BorderThickness="0,0,0,1" Padding="24,10">
       <DockPanel>
         <Button x:Name="BtnHealthBanner" DockPanel.Dock="Right" Style="{StaticResource Btn}" Background="#D92D20" Content="자세히 보기" Margin="0"/>
         <TextBlock x:Name="TxtBanner" Foreground="#912018" FontWeight="SemiBold" VerticalAlignment="Center" TextWrapping="Wrap"/>
       </DockPanel>
     </Border>
+    </StackPanel>
 
     <Grid Grid.Row="2" Margin="20,16,20,0">
       <Grid.ColumnDefinitions><ColumnDefinition Width="360"/><ColumnDefinition Width="16"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
@@ -1858,7 +1866,7 @@ function Stop-GuiWithError($err) {
 }
 try { $script:Window = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml)) } catch { Stop-GuiWithError $_ }
 $ui = @{}
-foreach ($n in 'TxtVersion', 'BtnProtectAll', 'BtnCoverage', 'BtnHealth', 'Banner', 'TxtBanner', 'BtnHealthBanner', 'TglSites', 'StSites', 'SubSites', 'BtnSitesDetail', 'TglBph', 'StBph', 'SubBph', 'BtnBphDetail',
+foreach ($n in 'TxtVersion', 'BtnProtectAll', 'BtnCoverage', 'BtnHealth', 'Banner', 'TxtBanner', 'BtnHealthBanner', 'UpdBanner', 'TxtUpdBanner', 'BtnRestart', 'TglSites', 'StSites', 'SubSites', 'BtnSitesDetail', 'TglBph', 'StBph', 'SubBph', 'BtnBphDetail',
     'TglPua', 'StPua', 'SubPua', 'BtnPuaDetail', 'TglRansom', 'StRansom', 'SubRansom', 'BtnRansomDetail', 'BtnScan', 'ChkSusp', 'SummaryBox', 'TxtSummary',
     'Grid', 'BtnClean', 'ChkRestore', 'BtnReport', 'TxtLog', 'BtnFolder', 'BtnUpdate', 'TxtFooter', 'Busy') { $ui[$n] = $script:Window.FindName($n) }
 $script:UiLog = $ui.TxtLog
@@ -1875,6 +1883,23 @@ function Set-Toggle($Tgl, $Text, [bool]$On) {
 function Update-Footer {
     $st = Get-State
     $ui.TxtFooter.Text = "슈크인의 홈 PC 프로텍터 · 보안관제(SOC) · 위협 목록 $(if ($st.DbVersion) { $st.DbVersion } else { '내장' }) · 마지막 업데이트 확인 $(if ($st.LastUpdateCheck) { $st.LastUpdateCheck } else { '없음' }) · 기록·백업: $DataDir"
+}
+function Restart-App {
+    # 관리자 권한 PowerShell에서 띄우므로 새 창도 관리자 권한을 이어받는다. 설치본(자동 업데이트된 새 버전)을 연다.
+    if ($ui.Busy.Visibility -eq 'Visible') { [System.Windows.MessageBox]::Show('작업이 끝난 뒤 다시 시작해 주세요.', $AppTitle) | Out-Null; return }
+    try {
+        Write-Log '새 버전으로 다시 시작합니다.'
+        Start-Process -FilePath $PsExe -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-STA', '-WindowStyle', 'Hidden', '-File', "`"$InstalledScript`"" -ErrorAction Stop
+        $script:Window.Close()
+    } catch { Write-Log "다시 시작 실패 — 직접 닫았다가 다시 열어 주세요: $($_.Exception.Message)" 'WARN' }
+}
+function Test-NewerInstalled {
+    # 창을 연 뒤 자동 업데이트(예약 작업)가 새 버전을 설치했으면 파란 띠로 알린다
+    $iv = Get-ScriptVer $InstalledScript
+    if ($iv -gt (Get-NumVer $Version)) {
+        $ui.TxtUpdBanner.Text = "새 버전 $iv 이(가) 설치됐습니다(지금 실행 중: $(Get-NumVer $Version)). 다시 시작하면 적용됩니다."
+        $ui.UpdBanner.Visibility = 'Visible'
+    } else { $ui.UpdBanner.Visibility = 'Collapsed' }
 }
 function Update-Banner {
     $h = Get-DefenderHealth -Quick
@@ -2044,11 +2069,21 @@ $ui.BtnSitesDetail.Add_Click({ Show-Detail '위험 사이트 차단 — 차단 �
 $ui.BtnBphDetail.Add_Click({ $script:Window.Cursor = [System.Windows.Input.Cursors]::Wait; try { $d = Get-BphDetail } finally { $script:Window.Cursor = $null }; Show-Detail '방탄호스팅 통신 차단 — 차단 기록·대역' $d.Intro $d.Sections })
 $ui.BtnPuaDetail.Add_Click({ $d = Get-PuaDetail; Show-Detail '원치 않는 앱(PUA) 차단 — 탐지 내역' $d.Intro $d.Sections })
 $ui.BtnFolder.Add_Click({ Start-Process explorer.exe $DataDir })
+$ui.BtnRestart.Add_Click({ Restart-App })
+# 5분마다 + 창을 다시 볼 때(최소 1분 간격) 설치본 버전 확인
+$script:LastVerCheck = Get-Date
+$script:VerTimer = New-Object System.Windows.Threading.DispatcherTimer
+$script:VerTimer.Interval = [TimeSpan]::FromMinutes(5)
+$script:VerTimer.Add_Tick({ $script:LastVerCheck = Get-Date; Test-NewerInstalled })
+$script:Window.Add_Activated({ if (((Get-Date) - $script:LastVerCheck).TotalSeconds -ge 60) { $script:LastVerCheck = Get-Date; Test-NewerInstalled } })
 $ui.BtnUpdate.Add_Click({
     $r = $null
     Invoke-Busy { $script:UpdResult = Invoke-AutoUpdate }
     $r = $script:UpdResult
-    if ($r.Self) { [System.Windows.MessageBox]::Show('새 버전을 설치했습니다. 홈가드를 닫았다가 다시 열면 적용됩니다.', $AppTitle, 'OK', 'Information') | Out-Null }
+    if ($r.Self) {
+        if ([System.Windows.MessageBox]::Show("새 버전 $(Get-ScriptVer $InstalledScript)을(를) 설치했습니다(서명 확인).`n지금 다시 시작할까요?", $AppTitle, 'YesNo', 'Question') -eq 'Yes') { Restart-App; return }
+        Test-NewerInstalled
+    }
     elseif ($r.Db) { [System.Windows.MessageBox]::Show('위협 목록을 최신으로 갱신해 보호 설정에 반영했습니다.', $AppTitle, 'OK', 'Information') | Out-Null }
     Update-Footer
 })
@@ -2070,6 +2105,8 @@ $script:Window.Add_ContentRendered({
     Update-Status
     Update-Footer
     Update-Banner
+    Test-NewerInstalled
+    $script:VerTimer.Start()
     $st = Get-State
     if ($st.LastSelfUpdate) { Write-Log ("자동 업데이트: {0} → {1} ({2})" -f $st.LastSelfUpdate.From, $st.LastSelfUpdate.To, $st.LastSelfUpdate.Time) }
     if ($st.LastScan) { Write-Log ("지난 검사: {0} (위험 {1}, 의심 {2})" -f $st.LastScan.Time, $st.LastScan.Danger, $st.LastScan.Suspicious) }
