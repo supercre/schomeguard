@@ -7,20 +7,20 @@
   - Windows Defender '원치 않을 수 있는 앱(PUA)' 차단 켜기
 
   실행: SCHomeGuard.exe 더블클릭(관리자 권한 요청) 또는 '실행(관리자).cmd'
-  명령줄: powershell -ExecutionPolicy Bypass -File SCHomeGuard.ps1 -Cli -Action Scan|Clean|Protect|Unprotect|Status|UpdateBPH|Detail|DecoyAlert|Update [-IncludeSuspicious]
+  명령줄: powershell -ExecutionPolicy Bypass -File SCHomeGuard.ps1 -Cli -Action Scan|Clean|Protect|Unprotect|Status|UpdateBPH|Detail|DecoyAlert|Update|ScanExclusions [-IncludeSuspicious]
   기록·백업: C:\ProgramData\SCHomeGuard (logs, backup, quarantine)
   만든 곳: SuperCreative 보안관제(SOC) 2026-10-13
 #>
 [CmdletBinding()]
 param(
     [switch]$Cli,
-    [ValidateSet('Scan', 'Clean', 'Protect', 'Unprotect', 'Status', 'UpdateBPH', 'Detail', 'DecoyAlert', 'Update')]
+    [ValidateSet('Scan', 'Clean', 'Protect', 'Unprotect', 'Status', 'UpdateBPH', 'Detail', 'DecoyAlert', 'Update', 'ScanExclusions')]
     [string]$Action = 'Scan',
     [switch]$IncludeSuspicious
 )
 
 $ErrorActionPreference = 'Continue'
-$Version  = '1.2.0 (2026-11-09)'
+$Version  = '1.2.1 (2026-11-09)'
 $AppTitle = '슈크인 홈 PC 프로텍터'
 $PsExe    = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 
@@ -713,8 +713,8 @@ function Invoke-Scan {
     }
     foreach ($x in $h.Exclusions) {
         if ($x.'판정' -eq '정상') { continue }
-        $why = $(if ($x._broad) { '넓은 범위·실행 형식 예외 — 악성코드가 숨기 좋은 설정' } else { '예외 폴더 안에 실행 파일 — Defender가 검사하지 않음' })
-        Add-Finding $(if ($x.'판정' -eq '위험') { '위험' } else { '의심' }) $dsig 'Defender 예외' "$($x.'종류'): $($x.'예외')" ("{0} · 실행 파일 {1}{2}" -f $why, $x.'실행 파일', $(if ($x.'예시') { " (예: $($x.'예시'))" } else { '' })) @{ ExKind = $x.'종류'; ExValue = $x.'예외' }
+        $why = $(if ($x._broad) { '넓은 범위·실행 형식 예외 — 직접 둔 예외가 아니면 확인 권장' } else { '예외 폴더 안에 실행 파일 — Defender가 검사하지 않음(PC 보안 상태 → 예외 폴더 정밀 검사)' })
+        Add-Finding '의심' $dsig 'Defender 예외' "$($x.'종류'): $($x.'예외')" ("{0} · 실행 파일 {1}{2}" -f $why, $x.'실행 파일', $(if ($x.'예시') { " (예: $($x.'예시'))" } else { '' })) @{ ExKind = $x.'종류'; ExValue = $x.'예외' }
     }
     Update-Ui
     $rw = @($script:Findings | Where-Object Kind -eq '랜섬웨어 흔적').Count
@@ -1274,7 +1274,7 @@ function Get-ExecInFolder([string]$Path, [int]$Max = 3000) {
     }
     @{ Exists = $true; Files = @($out); Scanned = $n }
 }
-function Get-DefenderHealth {
+function Get-DefenderHealth([switch]$Quick) {
     $rows = New-Object System.Collections.ArrayList
     $vuln = New-Object System.Collections.ArrayList
     $av = @(Get-AvProducts)
@@ -1300,9 +1300,9 @@ function Get-DefenderHealth {
         else { & $add 'Defender 백신' "정보를 읽을 수 없음: $($_.Exception.Message)" '취약' 'Windows 보안 앱에서 바이러스 및 위협 방지를 확인하세요' }
     }
     if (-not @($av | Where-Object On).Count) { & $add '켜진 백신' '없음' '취약' 'Windows 보안에서 실시간 보호를 켜세요' }
-    # 예외 설정
+    # 예외 설정 (경고 띠 판단에는 쓰지 않는다 — 개발 폴더 등 정상적인 예외가 많다)
     $exc = New-Object System.Collections.ArrayList
-    try {
+    if (-not $Quick) { try {
         $mp = Get-MpPreference -ErrorAction Stop
         foreach ($p in @($mp.ExclusionPath | Where-Object { $_ -and $_ -notmatch '^N/A' })) {
             $r = Get-ExecInFolder $p
@@ -1320,16 +1320,54 @@ function Get-DefenderHealth {
             $grade = $(if ($ExecExt -contains $ee) { '위험' } else { '정상' })
             [void]$exc.Add([pscustomobject][ordered]@{ '종류' = '확장자'; '예외' = $e; '실행 파일' = $(if ($grade -eq '위험') { '실행 형식' } else { '' }); '예시' = ''; '판정' = $grade; '_files' = @(); '_broad' = ($grade -eq '위험') })
         }
-    } catch {}
-    $bad = @($exc | Where-Object { $_.'판정' -eq '위험' })
-    if ($bad.Count) { & $add 'Defender 예외 설정' "위험한 예외 $($bad.Count)개" '취약' '악성코드가 자기를 숨기려고 넓은 예외를 추가하는 경우가 많습니다. 검사 결과에서 제거할 수 있습니다' }
-    elseif ($exc.Count) { & $add 'Defender 예외 설정' "예외 $($exc.Count)개" $(if (@($exc | Where-Object { $_.'판정' -eq '의심' }).Count) { '주의' } else { '정상' }) '예외 폴더 안의 실행 파일은 검사되지 않습니다' }
+    } catch {} }
+    foreach ($x in $exc) { if ($x.'판정' -eq '위험') { $x.'판정' = '주의(넓은 범위)' } elseif ($x.'판정' -eq '의심') { $x.'판정' = '주의(실행 파일)' } }
+    $note = @($exc | Where-Object { $_.'판정' -like '주의*' })
+    if ($exc.Count) { & $add 'Defender 예외 설정' "예외 $($exc.Count)개$(if ($note.Count) { " (확인 권장 $($note.Count)개)" })" $(if ($note.Count) { '주의' } else { '정상' }) '예외 폴더는 Defender가 검사하지 않습니다. 직접 둔 예외가 아니면 [예외 폴더 정밀 검사]로 확인하세요' }
     @{ Rows = @($rows); Vulnerable = @($vuln); Exclusions = @($exc); Av = $av }
+}
+
+function Get-MpCmdRun {
+    $c = @(Get-ChildItem "$env:ProgramData\Microsoft\Windows Defender\Platform" -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending | ForEach-Object { Join-Path $_.FullName 'MpCmdRun.exe' } | Where-Object { Test-Path $_ })
+    if ($c.Count) { return $c[0] }
+    $p = Join-Path $env:ProgramFiles 'Windows Defender\MpCmdRun.exe'; if (Test-Path $p) { return $p }
+    return $null
+}
+function Invoke-ExclusionScan {
+    # Defender는 예외 폴더를 검사하지 않는다 → 검사하는 동안만 예외를 풀고, 보고 전용(-DisableRemediation)으로 검사한 뒤 반드시 되돌린다.
+    $mp = Get-MpCmdRun
+    if (-not $mp) { Write-Log 'Defender 명령줄 도구(MpCmdRun)를 찾지 못했습니다(다른 백신을 쓰는 PC일 수 있음).' 'WARN'; return @() }
+    $paths = @(try { (Get-MpPreference -ErrorAction Stop).ExclusionPath | Where-Object { $_ -and $_ -notmatch '^N/A' } } catch { @() })
+    $rows = New-Object System.Collections.ArrayList
+    foreach ($p in $paths) {
+        $full = [Environment]::ExpandEnvironmentVariables($p)
+        if (-not (Test-Path -LiteralPath $full)) { [void]$rows.Add([pscustomobject][ordered]@{ '예외 폴더' = $p; '결과' = '폴더 없음(검사 안 함)'; '위협' = ''; '파일' = '' }); continue }
+        Write-Log "예외 폴더 정밀 검사: $p (보고 전용 — 파일을 지우거나 격리하지 않습니다)"
+        Update-Ui
+        $removed = $false
+        try {
+            Remove-MpPreference -ExclusionPath $p -ErrorAction Stop; $removed = $true
+            $out = @(& $mp -Scan -ScanType 3 -File $full -DisableRemediation 2>&1 | ForEach-Object { "$_" })
+            $code = $LASTEXITCODE
+            $threats = @($out | Where-Object { $_ -match '^\s*Threat\s*:\s*(.+)$' } | ForEach-Object { ($_ -split ':', 2)[1].Trim() })
+            $files = @($out | Where-Object { $_ -match '^\s*file\s*:\s*(.+)$' } | ForEach-Object { ($_ -split ':', 2)[1].Trim() })
+            $res = $(if ($code -eq 0 -and -not $threats.Count) { '이상 없음' } elseif ($threats.Count) { "위협 $($threats.Count)개 발견" } else { "검사 완료(코드 $code)" })
+            [void]$rows.Add([pscustomobject][ordered]@{ '예외 폴더' = $p; '결과' = $res; '위협' = ($threats -join ' | '); '파일' = (@($files | Select-Object -First 10) -join ' | ') })
+            Write-Log "  → $res$(if ($threats.Count) { ': ' + ($threats -join ', ') })" $(if ($threats.Count) { 'ERROR' } else { 'OK' })
+        } catch {
+            [void]$rows.Add([pscustomobject][ordered]@{ '예외 폴더' = $p; '결과' = "검사 못 함: $($_.Exception.Message)"; '위협' = ''; '파일' = '' })
+            Write-Log "  → 검사 못 함(회사·학교 정책으로 관리되는 예외일 수 있음): $($_.Exception.Message)" 'WARN'
+        } finally {
+            if ($removed) { try { Add-MpPreference -ExclusionPath $p -ErrorAction Stop } catch { Write-Log "  예외 되돌리기 실패 — Windows 보안에서 '$p' 예외를 다시 추가하세요: $($_.Exception.Message)" 'ERROR' } }
+        }
+    }
+    Set-StateValue 'LastExclusionScan' @{ Time = (Get-Date).ToString('yyyy-MM-dd HH:mm'); Threats = @($rows | Where-Object { $_.'위협' }).Count }
+    return @($rows)
 }
 function Get-HealthDetail {
     $h = Get-DefenderHealth
     $intro = $(if ($h.Vulnerable.Count) { "⚠ 이 PC는 취약합니다: $($h.Vulnerable -join ', '). Windows Defender(또는 사용 중인 백신)가 제대로 켜져 있지 않으면 프록시웨어·랜섬웨어·정보 탈취 악성코드를 막지 못합니다. 아래 조치를 따르거나, 검사 후 [선택 항목 제거]로 고칠 수 있는 항목은 바로 고치세요." }
-              else { 'Windows Defender(또는 사용 중인 백신)가 정상적으로 PC를 보호하고 있습니다. 예외 폴더 안의 파일은 검사되지 않으니 꼭 필요한 예외만 두세요.' })
+              else { 'Windows Defender(또는 사용 중인 백신)가 정상적으로 PC를 보호하고 있습니다. 예외 폴더 안의 파일은 검사되지 않으니, 직접 둔 예외가 아니면 아래 [예외 폴더 정밀 검사]로 확인하세요(보고만 하고 파일은 건드리지 않습니다).' })
     $exc = @($h.Exclusions | Select-Object '종류', '예외', '실행 파일', '예시', '판정')
     $files = @(foreach ($x in $h.Exclusions) { foreach ($f in @($x._files | Select-Object -First 200)) { [pscustomobject][ordered]@{ '예외' = $x.'예외'; '실행 파일' = $f } } })
     $av = @($h.Av | ForEach-Object { [pscustomobject][ordered]@{ '백신' = $_.Name; '상태' = $(if ($_.On) { '켜짐' } else { '꺼짐' }); '서명' = $(if ($_.UpToDate) { '최신' } else { '오래됨' }); '경로' = $_.Path } })
@@ -1349,7 +1387,7 @@ function Get-CoverageDetail {
         [pscustomobject][ordered]@{ '기능' = '방탄호스팅 통신 차단'; '무엇을 막나' = '신고를 무시하고 악성코드·피싱·C2를 숨겨 주는 호스팅(방탄호스팅)과 범죄 조직이 장악한 IP 대역과의 통신(들어오는·나가는)'; '어떻게' = 'Windows 방화벽 차단 규칙 + 매주 목록 갱신, 차단 기록과 차단 프로그램 표시'; '한계' = '대역을 자주 바꾸는 업체는 갱신 전까지 통과할 수 있음'; '출처' = 'SuperCreative SOC 방화벽 목록(SOC_BPH_BLOCK) · Spamhaus DROP' }
         [pscustomobject][ordered]@{ '기능' = '원치 않는 앱(PUA) 차단'; '무엇을 막나' = '끼워팔기 설치파일, 애드웨어, 번들 다운로더, 브라우저 하이재커 등'; '어떻게' = 'Microsoft Defender PUA 보호 + Edge SmartScreen PUA 차단'; '한계' = '다른 백신을 쓰는 PC에서는 그 백신 설정을 따름'; '출처' = 'Microsoft Defender 문서(PUA protection) · 탐지 DB: Microsoft Security Intelligence' }
         [pscustomobject][ordered]@{ '기능' = '랜섬웨어 보호'; '무엇을 막나' = '문서·사진을 몰래 암호화하거나 지우는 프로그램(랜섬웨어)'; '어떻게' = '① 제어된 폴더 액세스: 허락 없는 프로그램의 문서·사진·바탕화면 수정 차단 ② 숨긴 미끼 파일이 바뀌면 즉시 경고 + 바꾼 프로그램 기록'; '한계' = '신뢰된 프로그램을 악용하면 폴더 보호를 지나갈 수 있음 → 미끼 경고로 보완. 백업을 대신하지 않음'; '출처' = 'Microsoft Defender 문서(Controlled folder access) · SOC 설계' }
-        [pscustomobject][ordered]@{ '기능' = 'PC 보안 상태 점검'; '무엇을 막나' = 'Windows Defender(백신)가 꺼졌거나 서명이 오래된 상태, 악성코드가 숨으려고 추가한 넓은 예외 설정'; '어떻게' = '실시간 보호·동작 감시·변조 방지·서명 상태와 예외 폴더 안 실행 파일을 확인해 취약하면 경고, 검사에서 다시 켜기·예외 삭제'; '한계' = '회사·학교 정책으로 관리되는 PC는 설정을 바꾸지 못할 수 있음'; '출처' = 'Microsoft Defender 문서 · SOC 설계' }
+        [pscustomobject][ordered]@{ '기능' = 'PC 보안 상태 점검'; '무엇을 막나' = 'Windows Defender(백신)가 꺼졌거나 서명이 오래된 상태, 검사되지 않는 예외 폴더'; '어떻게' = '실시간 보호·동작 감시·변조 방지·서명이 문제면 경고 띠와 검사에서 다시 켜기. 예외 폴더는 참고로 표시하고 [예외 폴더 정밀 검사](보고 전용)로 확인'; '한계' = '회사·학교 정책으로 관리되는 PC는 설정을 바꾸지 못할 수 있음'; '출처' = 'Microsoft Defender 문서 · SOC 설계' }
         [pscustomobject][ordered]@{ '기능' = '랜섬웨어 흔적 검사'; '무엇을 막나' = '이미 감염된 PC: 랜섬노트(복구 안내문), 문서 뒤에 낯선 확장자가 붙은 암호화 파일'; '어떻게' = '바탕화면·문서·사진·다운로드·OneDrive를 검사해 위험으로 표시(복구에 필요하므로 지우지 않음)'; '한계' = '흔적을 남기지 않는 변종은 못 찾음'; '출처' = 'SOC 설계 · 공개 랜섬웨어 사례(ransomware.live) · MITRE ATT&CK T1486' }
     )
     $sigs = @(foreach ($g in $Sigs) { [pscustomobject][ordered]@{ '이름' = $g.Name; '탐지 패턴' = $g.Pat; '설명' = $g.Note; '출처' = (Get-SigSource $g) } })
@@ -1543,6 +1581,7 @@ if ($Cli) {
         'Unprotect' { Set-SiteBlock $false; Set-BphBlock $false; Set-PuaProtection $false; Set-RansomProtection $false }
         'DecoyAlert' { Invoke-DecoyAlert }
         'Update' { Install-Self; [void](Invoke-AutoUpdate) }
+        'ScanExclusions' { Invoke-ExclusionScan | Format-Table -AutoSize -Wrap | Out-String -Width 220 | Write-Host }
         'UpdateBPH' { if (Test-BphBlock) { Set-BphBlock $true } else { Write-Log '방탄호스팅 차단이 꺼져 있어 갱신하지 않습니다.' } }
         'Status' { Get-ProtectionStatus | Format-Table -AutoSize | Out-String | Write-Host }
         'Detail' {
@@ -1838,7 +1877,7 @@ function Update-Footer {
     $ui.TxtFooter.Text = "슈크인의 홈 PC 프로텍터 · 보안관제(SOC) · 위협 목록 $(if ($st.DbVersion) { $st.DbVersion } else { '내장' }) · 마지막 업데이트 확인 $(if ($st.LastUpdateCheck) { $st.LastUpdateCheck } else { '없음' }) · 기록·백업: $DataDir"
 }
 function Update-Banner {
-    $h = Get-DefenderHealth
+    $h = Get-DefenderHealth -Quick
     if ($h.Vulnerable.Count) {
         $ui.TxtBanner.Text = "⚠ 이 PC는 취약합니다 — $($h.Vulnerable -join ', '). 백신이 제대로 켜져 있지 않으면 악성코드를 막지 못합니다."
         $ui.Banner.Visibility = 'Visible'
@@ -1885,7 +1924,7 @@ function Show-Results {
     $ui.BtnClean.IsEnabled = ($script:Rows.Count -gt 0)
 }
 
-function Show-Detail([string]$Title, [string]$Intro, $Sections) {
+function Show-Detail([string]$Title, [string]$Intro, $Sections, [string]$ActionLabel = '', [scriptblock]$Action = $null) {
     [xml]$dx = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Width="960" Height="620" MinWidth="640" MinHeight="400" WindowStartupLocation="CenterOwner" Background="#F3F5FA" FontFamily="Malgun Gothic, Segoe UI" FontSize="13">
@@ -1905,6 +1944,7 @@ function Show-Detail([string]$Title, [string]$Intro, $Sections) {
     <DockPanel Grid.Row="3" Margin="0,12,0,0">
       <Button x:Name="DClose" DockPanel.Dock="Right" Content="  닫기  " Padding="14,6" Margin="8,0,0,0"/>
       <Button x:Name="DCsv" DockPanel.Dock="Right" Content="  CSV로 저장  " Padding="14,6"/>
+      <Button x:Name="DAction" DockPanel.Dock="Left" Padding="14,6" Margin="0,0,12,0" Visibility="Collapsed"/>
       <TextBlock x:Name="DCount" Foreground="#98A2B3" VerticalAlignment="Center"/>
     </DockPanel>
   </Grid>
@@ -1956,6 +1996,10 @@ function Show-Detail([string]$Title, [string]$Intro, $Sections) {
         $v.ToTable() | Select-Object * -ExcludeProperty RowError, RowState, Table, ItemArray, HasErrors | Export-Csv -Path $f -NoTypeInformation -Encoding UTF8
         [System.Windows.MessageBox]::Show("바탕화면에 저장했습니다.`n$f", $Title) | Out-Null
     }.GetNewClosure())
+    if ($Action) {
+        $btn = $w.FindName('DAction'); $btn.Content = "  $ActionLabel  "; $btn.Visibility = 'Visible'
+        $btn.Add_Click({ $w.Cursor = [System.Windows.Input.Cursors]::Wait; try { & $Action } finally { $w.Cursor = $null } }.GetNewClosure())
+    }
     $tabs.SelectedIndex = 0; & $refresh
     [void]$w.ShowDialog()
 }
@@ -1984,7 +2028,14 @@ $ui.TglRansom.Add_Click({
     if (-not $on -and [System.Windows.MessageBox]::Show("랜섬웨어 보호를 끄면 미끼 파일 감시와 폴더 보호가 꺼집니다.`n끌까요?", $AppTitle, 'YesNo', 'Warning') -ne 'Yes') { Update-Status; return }
     Invoke-Busy { Set-RansomProtection $on }
 })
-$showHealth = { $script:Window.Cursor = [System.Windows.Input.Cursors]::Wait; try { $d = Get-HealthDetail } finally { $script:Window.Cursor = $null }; Show-Detail 'PC 보안 상태 — Windows Defender·예외 폴더' $d.Intro $d.Sections; Update-Banner }
+$scanExclusions = {
+    $msg = "예외 폴더를 Windows Defender로 검사합니다.`n`n· 검사하는 동안만 예외를 잠시 풀고, 끝나면 원래대로 되돌립니다.`n· 보고 전용이라 파일을 지우거나 격리하지 않습니다.`n· 폴더가 크면 몇 분 걸릴 수 있습니다.`n`n시작할까요?"
+    if ([System.Windows.MessageBox]::Show($msg, $AppTitle, 'YesNo', 'Question') -ne 'Yes') { return }
+    $r = @(Invoke-ExclusionScan)
+    $bad = @($r | Where-Object { $_.'위협' }).Count
+    Show-Detail '예외 폴더 정밀 검사 결과' $(if ($bad) { "⚠ 예외 폴더 $($bad)곳에서 위협이 발견됐습니다. 직접 둔 예외라면 해당 파일을 확인하고, 모르는 파일이면 보안관제(SOC)에 알려 주세요. (보고 전용이라 아무것도 지우지 않았습니다)" } else { '예외 폴더에서 위협이 발견되지 않았습니다. (Windows Defender 보고 전용 검사)' }) ([ordered]@{ "검사 결과 ($($r.Count))" = $r })
+}
+$showHealth = { $script:Window.Cursor = [System.Windows.Input.Cursors]::Wait; try { $d = Get-HealthDetail } finally { $script:Window.Cursor = $null }; Show-Detail 'PC 보안 상태 — Windows Defender·예외 폴더' $d.Intro $d.Sections '예외 폴더 정밀 검사' $scanExclusions; Update-Banner }
 $ui.BtnHealth.Add_Click($showHealth)
 $ui.BtnHealthBanner.Add_Click($showHealth)
 $ui.BtnCoverage.Add_Click({ $d = Get-CoverageDetail; Show-Detail '무엇을 막나요? — 보호 범위·목록·출처' $d.Intro $d.Sections })

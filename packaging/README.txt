@@ -29,7 +29,7 @@
   · 방탄호스팅 통신 차단 — 방탄호스팅·Spamhaus DROP 대역(Windows 방화벽), 차단 기록과 차단 프로그램 표시
   · 원치 않는 앱(PUA) 차단 — Windows Defender·Edge
   · 랜섬웨어 보호 — 제어된 폴더 액세스 + 숨긴 미끼 파일 감시(건드리면 즉시 경고)
-  · PC 보안 상태 — Defender 꺼짐·서명 오래됨·위험한 예외 폴더(예외 안 실행 파일) 점검
+  · PC 보안 상태 — Defender 꺼짐·서명 오래됨 경고, 예외 폴더 정밀 검사(보고 전용, 파일은 건드리지 않음)
 
 ■ 자동 업데이트
   매일 GitHub(supercre/schomeguard, supercre/schomeguard-db)에서 새 버전과 위협 목록을 확인하고,
