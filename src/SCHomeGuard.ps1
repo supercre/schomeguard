@@ -7,20 +7,20 @@
   - Windows Defender '원치 않을 수 있는 앱(PUA)' 차단 켜기
 
   실행: SCHomeGuard.exe 더블클릭(관리자 권한 요청) 또는 '실행(관리자).cmd'
-  명령줄: powershell -ExecutionPolicy Bypass -File SCHomeGuard.ps1 -Cli -Action Scan|Clean|Protect|Unprotect|Status|UpdateBPH|Detail|DecoyAlert|Update|ScanExclusions [-IncludeSuspicious]
+  명령줄: powershell -ExecutionPolicy Bypass -File SCHomeGuard.ps1 -Cli -Action Scan|Clean|Protect|Unprotect|Status|UpdateBPH|Detail|DecoyAlert|Update|ScanExclusions|Uninstall [-IncludeSuspicious]
   기록·백업: C:\ProgramData\SCHomeGuard (logs, backup, quarantine)
   만든 곳: SuperCreative 보안관제(SOC) 2026-10-13
 #>
 [CmdletBinding()]
 param(
     [switch]$Cli,
-    [ValidateSet('Scan', 'Clean', 'Protect', 'Unprotect', 'Status', 'UpdateBPH', 'Detail', 'DecoyAlert', 'Update', 'ScanExclusions')]
+    [ValidateSet('Scan', 'Clean', 'Protect', 'Unprotect', 'Status', 'UpdateBPH', 'Detail', 'DecoyAlert', 'Update', 'ScanExclusions', 'Uninstall')]
     [string]$Action = 'Scan',
     [switch]$IncludeSuspicious
 )
 
 $ErrorActionPreference = 'Continue'
-$Version  = '1.2.2 (2026-11-09)'
+$Version  = '1.2.3 (2026-11-09)'
 $AppTitle = '슈크인 홈 PC 프로텍터'
 $PsExe    = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 
@@ -983,7 +983,7 @@ function Set-BphBlock([bool]$Enable) {
     Unregister-ScheduledTask -TaskName 'SCHomeGuard BPH 목록 갱신' -Confirm:$false -ErrorAction SilentlyContinue
     if (-not $Enable) { Set-FirewallDropLog $false; Use-Audit $AuditWfpConn 'WfpAuditOriginal' $false $false $false; Write-Log '방탄호스팅 차단 해제: 방화벽 규칙·자동 갱신 작업 삭제' 'OK'; return }
     Set-FirewallDropLog $true
-    try { Use-Audit $AuditWfpConn 'WfpAuditOriginal' $true $false $true; Write-Log '  차단된 연결의 프로그램을 알 수 있도록 Windows 감사(필터링 플랫폼 연결 실패)를 켰습니다.' } catch { Write-Log "감사 정책 설정 실패: $($_.Exception.Message)" 'WARN' }
+    # (1.2.3) Windows 감사 5157은 켜지 않는다 — 방탄호스팅뿐 아니라 PC의 모든 차단 연결을 기록해 보안 로그(기본 20MB)를 몇 분 만에 덮어쓴다.
     Write-Log '방탄호스팅·Spamhaus DROP 목록을 준비합니다.'
     $list = Get-BphList
     $chunks = [Math]::Ceiling($list.Count / 500)
@@ -1031,11 +1031,12 @@ $DecoyTask = 'SCHomeGuard 랜섬웨어 미끼 감시'
 $DecoyBase = '!SCHomeGuard_보호파일_건드리지_마세요'
 $AlertFile = Join-Path $DataDir 'ransom_alerts.jsonl'
 function Get-DecoyDirs {
-    $subs = 'Desktop', 'Documents', 'Pictures', 'OneDrive\Desktop', 'OneDrive\Documents', 'OneDrive\Pictures', 'OneDrive\바탕 화면', 'OneDrive\문서', 'OneDrive\사진'
+    # (1.2.3) OneDrive 폴더는 제외 — 숨김 미끼가 클라우드·다른 PC로 동기화되고, '공간 확보'(파일 내용 비우기)가 오경보를 낸다.
+    # 바탕화면·문서·사진이 OneDrive로 옮겨진 PC는 로컬에 남은 폴더에만 둔다.
     foreach ($pr in @(Get-ProfileDirs)) {
-        foreach ($sd in $subs) { $d = Join-Path $pr $sd; if (Test-Path -LiteralPath $d -PathType Container) { $d } }
-        foreach ($od in @(Get-ChildItem -LiteralPath $pr -Directory -Filter 'OneDrive - *' -ErrorAction SilentlyContinue)) {
-            foreach ($sd in 'Desktop', 'Documents', 'Pictures', '바탕 화면', '문서', '사진') { $d = Join-Path $od.FullName $sd; if (Test-Path -LiteralPath $d -PathType Container) { $d } }
+        foreach ($sd in 'Desktop', 'Documents', 'Pictures', 'Downloads', 'Music', 'Videos') {
+            $d = Join-Path $pr $sd
+            if ((Test-Path -LiteralPath $d -PathType Container) -and $d -notmatch '\\OneDrive') { $d }
         }
     }
 }
@@ -1346,6 +1347,7 @@ function Invoke-ExclusionScan {
         Update-Ui
         $removed = $false
         try {
+            Set-StateValue 'ExclusionPending' @($p)   # 검사 중 꺼지거나 멈춰도 다음 실행 때 되돌린다
             Remove-MpPreference -ExclusionPath $p -ErrorAction Stop; $removed = $true
             $out = @(& $mp -Scan -ScanType 3 -File $full -DisableRemediation 2>&1 | ForEach-Object { "$_" })
             $code = $LASTEXITCODE
@@ -1358,11 +1360,38 @@ function Invoke-ExclusionScan {
             [void]$rows.Add([pscustomobject][ordered]@{ '예외 폴더' = $p; '결과' = "검사 못 함: $($_.Exception.Message)"; '위협' = ''; '파일' = '' })
             Write-Log "  → 검사 못 함(회사·학교 정책으로 관리되는 예외일 수 있음): $($_.Exception.Message)" 'WARN'
         } finally {
-            if ($removed) { try { Add-MpPreference -ExclusionPath $p -ErrorAction Stop } catch { Write-Log "  예외 되돌리기 실패 — Windows 보안에서 '$p' 예외를 다시 추가하세요: $($_.Exception.Message)" 'ERROR' } }
+            if ($removed) { try { Add-MpPreference -ExclusionPath $p -ErrorAction Stop; Set-StateValue 'ExclusionPending' @() } catch { Write-Log "  예외 되돌리기 실패 — Windows 보안에서 '$p' 예외를 다시 추가하세요: $($_.Exception.Message)" 'ERROR' } }
         }
     }
     Set-StateValue 'LastExclusionScan' @{ Time = (Get-Date).ToString('yyyy-MM-dd HH:mm'); Threats = @($rows | Where-Object { $_.'위협' }).Count }
     return @($rows)
+}
+
+function Repair-PreviousVersion {
+    # 이전 버전이 남긴 부작용을 정리한다(매 실행 시 빠르게 확인).
+    $st = Get-State
+    if ($null -ne $st.WfpAuditOriginal) {
+        try { Use-Audit $AuditWfpConn 'WfpAuditOriginal' $false $false $false; Write-Log '이전 버전이 켠 Windows 감사(필터링 플랫폼 연결)를 원래대로 되돌렸습니다 — 보안 로그를 덮어쓰지 않습니다.' 'OK' } catch {}
+    }
+    if (@($st.Decoys | Where-Object { $_.Path -match '\\OneDrive' }).Count -and (Get-ScheduledTask -TaskName $DecoyTask -ErrorAction SilentlyContinue)) {
+        Write-Log 'OneDrive 폴더의 미끼 파일을 정리하고 로컬 폴더에 다시 둡니다.'
+        try { Set-RansomProtection $true } catch {}
+    }
+    foreach ($p in @($st.ExclusionPending)) {
+        if (-not $p) { continue }
+        try { Add-MpPreference -ExclusionPath $p -ErrorAction Stop; Write-Log "정밀 검사 중 풀었던 예외를 되돌렸습니다: $p" 'OK' } catch {}
+    }
+    if (@($st.ExclusionPending).Count) { Set-StateValue 'ExclusionPending' @() }
+}
+function Uninstall-HomeGuard {
+    # 바꾼 설정을 모두 원래대로 돌리고 예약 작업을 지운다. 기록·백업 폴더는 남긴다(복원에 필요).
+    Write-Log '홈가드를 완전히 제거합니다: 보호 설정 해제 → 예약 작업 삭제'
+    Set-SiteBlock $false; Set-BphBlock $false; Set-PuaProtection $false; Set-RansomProtection $false
+    Use-Audit $AuditWfpConn 'WfpAuditOriginal' $false $false $false
+    foreach ($t in 'SCHomeGuard 자동 업데이트', 'SCHomeGuard BPH 목록 갱신', $DecoyTask, 'SCHomeGuard 경고 표시') { Unregister-ScheduledTask -TaskName $t -Confirm:$false -ErrorAction SilentlyContinue }
+    Remove-Item -LiteralPath $DbDir -Recurse -Force -ErrorAction SilentlyContinue
+    Set-StateValue 'Uninstalled' (Get-Date).ToString('yyyy-MM-dd HH:mm')
+    Write-Log "제거 완료. 기록·백업은 $DataDir 에 남겨 두었습니다(필요 없으면 직접 지우세요)." 'OK'
 }
 function Get-HealthDetail {
     $h = Get-DefenderHealth
@@ -1540,7 +1569,7 @@ function Get-BphDetail([int]$MaxRows = 500) {
     } catch {}
     $st = Get-State
     $intro = if (-not (Test-BphBlock)) { '방탄호스팅 통신 차단이 꺼져 있습니다. 켜면 방화벽이 아래 대역과의 통신을 막고, 차단된 접속을 기록합니다.' }
-             else { "차단 대역 $($ranges.Count)개(갱신 $($st.BphUpdated)). 차단된 접속 $($hits.Count)건" + $(if (-not $logOn) { ' — 방화벽 차단 기록이 꺼져 있어 기록을 볼 수 없습니다(회사 정책 PC일 수 있음).' } else { '. 방화벽 기록에는 프로그램 이름이 없어 PID만 표시합니다.' }) }
+             else { "차단 대역 $($ranges.Count)개(갱신 $($st.BphUpdated)). 차단된 접속 $($hits.Count)건" + $(if (-not $logOn) { ' — 방화벽 차단 기록이 꺼져 있어 기록을 볼 수 없습니다(회사 정책 PC일 수 있음).' } else { '. 차단 프로그램은 방화벽 기록의 PID로 지금 실행 중인 프로세스를 찾아 표시합니다(이미 끝난 경우 종료됨).' }) }
     @{ Intro = $intro; Sections = [ordered]@{ "차단된 접속 ($($hits.Count))" = $hits; "차단 대역 ($($ranges.Count))" = @($ranges) } }
 }
 
@@ -1574,6 +1603,7 @@ function Get-PuaDetail {
 if ($Cli) {
     Write-Log "$AppTitle $Version — $Action"
     Remove-LegacyHosts
+    if ($Action -ne 'DecoyAlert') { Repair-PreviousVersion }
     switch ($Action) {
         'Scan' { $r = Invoke-Scan; $r | Sort-Object Order | Format-Table Severity, Product, Kind, Target -AutoSize -Wrap | Out-String -Width 220 | Write-Host; if (@($r | Where-Object Severity -eq '위험').Count) { exit 2 } }
         'Clean' { $r = Invoke-Scan; Invoke-Clean @($r | Where-Object { $_.Severity -eq '위험' -or $IncludeSuspicious }) $true; [void](Invoke-Scan) }
@@ -1581,6 +1611,7 @@ if ($Cli) {
         'Unprotect' { Set-SiteBlock $false; Set-BphBlock $false; Set-PuaProtection $false; Set-RansomProtection $false }
         'DecoyAlert' { Invoke-DecoyAlert }
         'Update' { Install-Self; [void](Invoke-AutoUpdate) }
+        'Uninstall' { Uninstall-HomeGuard }
         'ScanExclusions' { Invoke-ExclusionScan | Format-Table -AutoSize -Wrap | Out-String -Width 220 | Write-Host }
         'UpdateBPH' { if (Test-BphBlock) { Set-BphBlock $true } else { Write-Log '방탄호스팅 차단이 꺼져 있어 갱신하지 않습니다.' } }
         'Status' { Get-ProtectionStatus | Format-Table -AutoSize | Out-String | Write-Host }
@@ -1849,6 +1880,7 @@ try {
       <DockPanel>
         <Button x:Name="BtnFolder" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="기록·백업 폴더 열기" Margin="0" Padding="12,5"/>
         <Button x:Name="BtnUpdate" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="업데이트 확인" Margin="0,0,8,0" Padding="12,5"/>
+        <Button x:Name="BtnUninstall" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="홈가드 완전 제거" Margin="0,0,8,0" Padding="12,5"/>
         <ProgressBar x:Name="Busy" DockPanel.Dock="Right" Width="160" Height="6" Margin="0,0,14,0" IsIndeterminate="True" Visibility="Hidden" Foreground="#3B5BDB" Background="#E4E8F2" BorderThickness="0"/>
         <TextBlock x:Name="TxtFooter" Foreground="#667085" VerticalAlignment="Center" Text="SuperCreative 보안관제(SOC) · 기록·백업: C:\ProgramData\SCHomeGuard"/>
       </DockPanel>
@@ -1868,7 +1900,7 @@ try { $script:Window = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.
 $ui = @{}
 foreach ($n in 'TxtVersion', 'BtnProtectAll', 'BtnCoverage', 'BtnHealth', 'Banner', 'TxtBanner', 'BtnHealthBanner', 'UpdBanner', 'TxtUpdBanner', 'BtnRestart', 'TglSites', 'StSites', 'SubSites', 'BtnSitesDetail', 'TglBph', 'StBph', 'SubBph', 'BtnBphDetail',
     'TglPua', 'StPua', 'SubPua', 'BtnPuaDetail', 'TglRansom', 'StRansom', 'SubRansom', 'BtnRansomDetail', 'BtnScan', 'ChkSusp', 'SummaryBox', 'TxtSummary',
-    'Grid', 'BtnClean', 'ChkRestore', 'BtnReport', 'TxtLog', 'BtnFolder', 'BtnUpdate', 'TxtFooter', 'Busy') { $ui[$n] = $script:Window.FindName($n) }
+    'Grid', 'BtnClean', 'ChkRestore', 'BtnReport', 'TxtLog', 'BtnFolder', 'BtnUpdate', 'BtnUninstall', 'TxtFooter', 'Busy') { $ui[$n] = $script:Window.FindName($n) }
 $script:UiLog = $ui.TxtLog
 $ui.TxtVersion.Text = "버전 $Version"
 $script:Rows = New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
@@ -1920,7 +1952,7 @@ function Update-Status {
     $ui.SubRansom.Text = $(if ($s.Ransom) { "미끼 파일 $(@($st.Decoys).Count)개 감시 · 경고 $(if (Test-Path $AlertFile) { @(Get-Content $AlertFile | Where-Object { $_ }).Count } else { 0 })건" } else { '' })
     $ui.SubPua.Text = $(try { $n = @(Get-MpThreatDetection -ErrorAction Stop).Count; "Defender 탐지 기록 $($n)건" } catch { 'Defender 정보 없음' })
 }
-$script:Buttons = @($ui.BtnUpdate, $ui.BtnProtectAll, $ui.TglSites, $ui.TglBph, $ui.TglPua, $ui.TglRansom, $ui.BtnScan, $ui.BtnClean, $ui.BtnReport)
+$script:Buttons = @($ui.BtnUpdate, $ui.BtnUninstall, $ui.BtnProtectAll, $ui.TglSites, $ui.TglBph, $ui.TglPua, $ui.TglRansom, $ui.BtnScan, $ui.BtnClean, $ui.BtnReport)
 function Invoke-Busy([scriptblock]$Work) {
     foreach ($b in $script:Buttons) { $b.IsEnabled = $false }
     $ui.Busy.Visibility = 'Visible'; $script:Window.Cursor = [System.Windows.Input.Cursors]::Wait; Update-Ui
@@ -2070,6 +2102,12 @@ $ui.BtnBphDetail.Add_Click({ $script:Window.Cursor = [System.Windows.Input.Curso
 $ui.BtnPuaDetail.Add_Click({ $d = Get-PuaDetail; Show-Detail '원치 않는 앱(PUA) 차단 — 탐지 내역' $d.Intro $d.Sections })
 $ui.BtnFolder.Add_Click({ Start-Process explorer.exe $DataDir })
 $ui.BtnRestart.Add_Click({ Restart-App })
+$ui.BtnUninstall.Add_Click({
+    $msg = "홈가드가 바꾼 설정을 모두 원래대로 돌리고, 자동 업데이트·감시 작업을 지웁니다.`n`n· 위험 사이트·방탄호스팅·PUA·랜섬웨어 보호가 꺼집니다.`n· 기록·백업 폴더($DataDir)는 남겨 둡니다.`n`n계속할까요?"
+    if ([System.Windows.MessageBox]::Show($msg, $AppTitle, 'YesNo', 'Warning') -ne 'Yes') { return }
+    Invoke-Busy { Uninstall-HomeGuard }
+    [System.Windows.MessageBox]::Show('제거했습니다. 이 창을 닫으면 끝납니다.', $AppTitle, 'OK', 'Information') | Out-Null
+})
 # 5분마다 + 창을 다시 볼 때(최소 1분 간격) 설치본 버전 확인
 $script:LastVerCheck = Get-Date
 $script:VerTimer = New-Object System.Windows.Threading.DispatcherTimer
@@ -2102,6 +2140,7 @@ $script:Window.Add_ContentRendered({
     Write-Log "$AppTitle $Version 시작 — PC $env:COMPUTERNAME"
     Install-Self
     Remove-LegacyHosts
+    Repair-PreviousVersion
     Update-Status
     Update-Footer
     Update-Banner
