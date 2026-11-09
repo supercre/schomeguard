@@ -1,0 +1,56 @@
+name: release
+on:
+  push:
+    tags: ['v*.*.*']
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Check version matches tag
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'.TrimStart('v')
+          $line = Select-String -Path src/SCHomeGuard.ps1 -Pattern "^\`$Version\s*=\s*'([^ ']+)" | Select-Object -First 1
+          if (-not $line -or $line.Matches[0].Groups[1].Value -ne $tag) { throw "src/SCHomeGuard.ps1 `$Version 과 태그($tag)가 다릅니다" }
+      - name: Build launcher
+        run: dotnet build launcher/SCHomeGuard.csproj -c Release -o out -p:Version=$('${{ github.ref_name }}'.TrimStart('v'))
+        shell: pwsh
+      - name: Package
+        shell: pwsh
+        run: |
+          $v = '${{ github.ref_name }}'
+          $name = "SCHomeGuard_$v"
+          New-Item -ItemType Directory -Force dist/$name | Out-Null
+          Copy-Item out/SCHomeGuard.exe, src/SCHomeGuard.ps1, packaging/Run_PowerShell.cmd, packaging/README.txt dist/$name/
+          Compress-Archive -Path dist/$name -DestinationPath dist/$name.zip -Force
+          Copy-Item src/SCHomeGuard.ps1 dist/SCHomeGuard.ps1
+          $files = foreach ($f in @("$name.zip", 'SCHomeGuard.ps1')) {
+            $p = "dist/$f"
+            [ordered]@{ name = $f; size = (Get-Item $p).Length; sha256 = (Get-FileHash $p -Algorithm SHA256).Hash.ToLower() }
+          }
+          [ordered]@{ product = 'schomeguard'; version = $v.TrimStart('v'); published = (Get-Date).ToUniversalTime().ToString('o'); files = @($files) } |
+            ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8NoBOM dist/manifest.json
+      - name: Sign manifest
+        shell: bash
+        env:
+          SIGNING_KEY: ${{ secrets.HG_RELEASE_SIGNING_KEY }}
+        run: |
+          if [ -z "$SIGNING_KEY" ]; then echo "::warning::HG_RELEASE_SIGNING_KEY 없음 — 서명 없이 릴리스(클라이언트 자동 업데이트는 거부)"; exit 0; fi
+          printf '%s' "$SIGNING_KEY" > key.pem
+          openssl dgst -sha256 -sign key.pem -out dist/manifest.sig dist/manifest.json
+          rm -f key.pem
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v='${{ github.ref_name }}'
+          files="dist/SCHomeGuard_$v.zip dist/SCHomeGuard.ps1 dist/manifest.json"
+          [ -f dist/manifest.sig ] && files="$files dist/manifest.sig"
+          gh release create "$v" $files --title "SCHomeGuard $v" --generate-notes

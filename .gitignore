@@ -1,0 +1,7 @@
+launcher/bin/
+launcher/obj/
+launcher/out/
+dist/
+*.zip
+*.pem
+*.key
