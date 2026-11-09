@@ -1,5 +1,7 @@
 # SCHomeGuard — 슈크인의 홈 PC 프로텍터
 
+> **개인 집 PC 전용입니다.** 회사 PC에는 설치하지 마세요 — 회사 PC는 보안관제(SOC)가 별도의 관리 도구로 보호합니다.
+
 **슈크인(슈퍼크리에이티브 구성원)의 집 PC를 위한** Windows 보안 점검 도구입니다.
 
 회사 PC는 보안관제(SOC)가 관리·통제할 수 있지만, 집 PC는 그렇지 않습니다.
@@ -10,8 +12,11 @@
 | 기능 | 내용 |
 |---|---|
 | 프록시웨어 검사·제거 | PC 회선을 남에게 빌려주는 프로그램 15종(DeskRest, Apprunner, Honeygain, EarnApp, Pawns, PacketStream …)을 설치 폴더·레지스트리·자동 실행·예약 작업·서비스·바로가기·사용 기록까지 찾아 지웁니다. 제거 전 시스템 복원 지점과 백업을 만듭니다. |
-| Softonic 차단 | 스폰서 설치파일로 프록시웨어를 끼워 배포한 다운로드 사이트를 Chrome·Edge·Whale·Brave·Firefox에서 막습니다. |
-| 방탄호스팅 차단 | 공격에 쓰이는 방탄호스팅과 Spamhaus DROP 대역을 Windows 방화벽에서 막고 매주 갱신합니다. |
+| 위험 사이트 차단 | 끼워팔기 다운로드 사이트(Softonic 등)와 SOC가 확인한 악성 서버 도메인을 Chrome·Edge·Whale·Brave·Firefox에서 막습니다. |
+| 방탄호스팅 차단 | 공격에 쓰이는 방탄호스팅과 Spamhaus DROP 대역을 Windows 방화벽에서 막고 매주 갱신합니다. 차단된 접속과 차단 프로그램(↗ OUT / ↙ IN)을 보여 줍니다. |
+| 원치 않는 앱(PUA) 차단 | Defender·Edge PUA 차단, Defender 탐지 내역 표시 |
+| 랜섬웨어 보호 | 제어된 폴더 액세스 + 숨긴 미끼 파일 감시(건드리면 즉시 경고), 검사 시 랜섬노트·암호화 흔적 표시(지우지 않음) |
+| 보호 범위 보기 | "무엇을 막나요?" 창에서 기능별 설명·한계, 프록시웨어·위험 사이트·랜섬웨어 감시 목록과 출처 |
 | 결과 저장 | 바탕화면에 결과 파일을 남겨 SOC에 보낼 수 있습니다. |
 
 로드맵: 자동 업데이트(서명 검증), 위험 대역·신규 도메인 접속 검사, 온디바이스 AI 판정(임베딩 + 벡터 DB + 소형 LLM), Rust 상주 엔진, macOS 판.
@@ -24,7 +29,7 @@
 
 명령줄:
 ```powershell
-powershell -ExecutionPolicy Bypass -File SCHomeGuard.ps1 -Cli -Action Scan|Clean|Protect|Unprotect|Status|UpdateBPH [-IncludeSuspicious]
+powershell -ExecutionPolicy Bypass -File SCHomeGuard.ps1 -Cli -Action Scan|Clean|Protect|Unprotect|Status|UpdateBPH|Detail [-IncludeSuspicious]
 ```
 
 ## 구성

@@ -1,26 +1,27 @@
 ﻿<#
-  SuperCreative 홈 PC 보안 점검 (SCHomeGuard)
+  슈크인 홈 PC 프로텍터 (SCHomeGuard) — 슈퍼크리에이티브 구성원의 개인 집 PC 전용
   - 프록시웨어(PC 인터넷 회선을 남에게 빌려주는 프로그램) 검사·제거
-  - Softonic(스폰서 설치파일로 프록시웨어를 끼워 배포한 다운로드 사이트) 차단 — 브라우저 정책(도메인 이름 기준)
+  - 위험 사이트 차단 — 끼워팔기 다운로드 사이트(Softonic 등)·SOC가 확인한 악성 서버 도메인, 브라우저 정책(도메인 이름 기준)
+  - 랜섬웨어 보호 — Defender 제어된 폴더 액세스 + 미끼 파일 감시(건드리면 즉시 경고), 검사 시 랜섬노트·암호화 흔적 확인
   - 방탄호스팅·Spamhaus DROP 대역 들어오고 나가는 통신 차단(Windows 방화벽, 매주 자동 갱신)
   - Windows Defender '원치 않을 수 있는 앱(PUA)' 차단 켜기
 
   실행: SCHomeGuard.exe 더블클릭(관리자 권한 요청) 또는 '실행(관리자).cmd'
-  명령줄: powershell -ExecutionPolicy Bypass -File SCHomeGuard.ps1 -Cli -Action Scan|Clean|Protect|Unprotect|Status|UpdateBPH [-IncludeSuspicious]
+  명령줄: powershell -ExecutionPolicy Bypass -File SCHomeGuard.ps1 -Cli -Action Scan|Clean|Protect|Unprotect|Status|UpdateBPH|Detail|DecoyAlert|Update [-IncludeSuspicious]
   기록·백업: C:\ProgramData\SCHomeGuard (logs, backup, quarantine)
   만든 곳: SuperCreative 보안관제(SOC) 2026-10-13
 #>
 [CmdletBinding()]
 param(
     [switch]$Cli,
-    [ValidateSet('Scan', 'Clean', 'Protect', 'Unprotect', 'Status', 'UpdateBPH')]
+    [ValidateSet('Scan', 'Clean', 'Protect', 'Unprotect', 'Status', 'UpdateBPH', 'Detail', 'DecoyAlert', 'Update')]
     [string]$Action = 'Scan',
     [switch]$IncludeSuspicious
 )
 
 $ErrorActionPreference = 'Continue'
-$Version  = '1.1.0 (2026-10-13)'
-$AppTitle = 'SuperCreative 홈 PC 보안 점검'
+$Version  = '1.2.0 (2026-11-09)'
+$AppTitle = '슈크인 홈 PC 프로텍터'
 $PsExe    = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 
 # ---------- 관리자 권한 / STA ----------
@@ -45,6 +46,12 @@ $BackupDir = Join-Path $DataDir 'backup'
 $QuarDir   = Join-Path $DataDir 'quarantine'
 $StateFile = Join-Path $DataDir 'state.json'
 $InstalledScript = Join-Path $DataDir 'SCHomeGuard.ps1'
+# ---------- 자동 업데이트 (서명 검증) ----------
+$UpdateRepo = 'supercre/schomeguard'      # 본체: GitHub 릴리스 manifest.json + manifest.sig(RSA-SHA256)
+$DbRepo     = 'supercre/schomeguard-db'   # 위협 목록: main 브랜치 manifest.json + manifest.sig
+$DbDir      = Join-Path $DataDir 'db'
+$ReleasePubKey = '<RSAKeyValue><Modulus>gciDXzZzMmh8wWdI5HaWdnj7WoYUePQ5Kr3y2RiGKcbhFFkf7fibvA2ikyGaBnwV5qdz0jT0Wq4tmGzkPwd6sh1zXXQllNGKGxZXgxAsMiyaN5UOsl6gMBpsCLnStsF3Y91SMHB+j6qMWMV8tDoCbJBrnzt/6oSUawWMWBs6un1g0NzJ3gGAb0lpMvh/0Pswe+6Sq1CxvYn0lBBviqLiW++mwzaF9CbL9H1hiZGkY6qL0zkI34w1fieaGavRvyVEANx95J/yDyyjUjYGTGJyTWsm7tn2ficnq6sGTUH3gAuqq35lXLJhJMdmBau9gFNZ4ZyEGE7temDvbl4GDdUuFfyifO6mBzYLTUOZw2Q448UxIebrpXsvciiiMakXEJmhBNiFgvKZ6xIWthZLgnIv6oCisEDs2+v2Ur2b7ekmQCFBgJGhtCQbwqRZSaynLO18n+ByjnEJXC8ofOQoP+ZxulVHB1efQFuxttuVUbYDzs3nHyKkvgNR/lClHYXDJLKr</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>'
+$DbPubKey      = '<RSAKeyValue><Modulus>qQZEB/iJhU3+X2D7nvCeNw4zxePbq7qGx4kSrVWBlaje6Bycq06asADqDoOvmhmpi1S2oO8F6Gh0XOCbhfvvizIJlSV0HivAZpo8gjG3jT2Ja75ldH67hRnVaOXHXnpERiwZ0xgdnWLihPKsgIYmezV9CPc32wp3KjVvnTm/aUkH1I/TJ0o4zbIxv753G9RgeTuLk6rrrAMkL8bIKo/wtnY+umIZ4ZdtvhH3DjWZcZe9rWHm78DIF88dQhjeJ1i7ecKT/2IPJiravPB189KfEel64f6nOcTLCd3CMH3P8vZbZ5CauHOnEwMD5XXFZkaTyyJxwrjOCrv5HneW7O0AuJ/g1A785ow+s2/G8LIi6fafoE9wSvkeb5XYF4KTobMXss2lxFMKuwPjzmOOH+BQb8mUfuPK/VkapHkNgXhVrnLDUAY0snzJffSUkol7fVwBrZ9Wn5uc6/7ZKmI3OtH+b+kEbfMzHq07rwp3fJKrESW5adJ514P+XQeT/l4My1wd</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>'
 foreach ($d in $DataDir, $LogDir, $BackupDir, $QuarDir) { if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null } }
 $script:LogFile = Join-Path $LogDir ('SCHomeGuard_{0:yyyyMMdd_HHmmss}_{1}.log' -f (Get-Date), $Action)
 $script:UiLog = $null
@@ -72,11 +79,29 @@ function Set-StateValue([string]$Name, $Value) {
     $s | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force
     $s | ConvertTo-Json -Depth 5 | Set-Content -Path $StateFile -Encoding UTF8
 }
+function Get-NumVer([string]$v) { $m = [regex]::Match("$v", '\d+(\.\d+){1,3}'); if ($m.Success) { [version]$m.Value } else { [version]'0.0' } }
+function Get-ScriptVer([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path)) { return [version]'0.0' }
+    $l = Select-String -LiteralPath $Path -Pattern "^\`$Version\s*=\s*'([^']+)'" -List -ErrorAction SilentlyContinue
+    if ($l) { Get-NumVer $l.Matches[0].Groups[1].Value } else { [version]'0.0' }
+}
 function Install-Self {
-    # 주간 자동 갱신 작업이 쓸 수 있도록 ProgramData에 스크립트 사본을 둔다(관리자만 쓰기 가능한 위치)
+    # 예약 작업이 쓸 수 있도록 ProgramData에 스크립트 사본을 둔다(관리자만 쓰기 가능한 위치).
+    # 자동 업데이트로 더 새 버전이 깔려 있으면 덮어쓰지 않는다(다운그레이드 방지).
     try {
-        if ($PSCommandPath -and ((Resolve-Path $PSCommandPath).Path -ne $InstalledScript)) { Copy-Item -LiteralPath $PSCommandPath -Destination $InstalledScript -Force }
+        if ($PSCommandPath -and ((Resolve-Path $PSCommandPath).Path -ne $InstalledScript) -and ((Get-NumVer $Version) -ge (Get-ScriptVer $InstalledScript))) {
+            Copy-Item -LiteralPath $PSCommandPath -Destination $InstalledScript -Force
+        }
     } catch { Write-Log "스크립트 사본 저장 실패: $($_.Exception.Message)" 'WARN' }
+    try {
+        if (-not (Get-ScheduledTask -TaskName 'SCHomeGuard 자동 업데이트' -ErrorAction SilentlyContinue)) {
+            $act = New-ScheduledTaskAction -Execute $PsExe -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$InstalledScript`" -Cli -Action Update"
+            $trg = New-ScheduledTaskTrigger -Daily -At 12:30 -RandomDelay (New-TimeSpan -Hours 2)
+            $set = New-ScheduledTaskSettingsSet -StartWhenAvailable -RunOnlyIfNetworkAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
+            Register-ScheduledTask -TaskName 'SCHomeGuard 자동 업데이트' -Description '슈크인의 홈 PC 프로텍터: 서명이 확인된 새 버전·위협 목록만 받습니다' -Action $act -Trigger $trg -Settings $set -User 'SYSTEM' -RunLevel Highest -Force -ErrorAction Stop | Out-Null
+            Write-Log '매일 자동 업데이트 작업을 등록했습니다(서명 확인 후에만 적용).'
+        }
+    } catch { Write-Log "자동 업데이트 작업 등록 실패: $($_.Exception.Message)" 'WARN' }
 }
 
 # ---------- 탐지 규칙 ----------
@@ -105,8 +130,27 @@ function Get-Sig([string]$Text) {
     return $null
 }
 
-# ---------- Softonic / 프록시웨어 도메인 ----------
-$SoftonicDomains = @('softonic.com', 'softonic.kr', 'softonic.jp', 'softonic.com.br', 'softonic.fr', 'softonic.de', 'softonic.it', 'softonic.pl', 'softonic.nl', 'sftcdn.net')
+# ---------- 위험 사이트 (브라우저 정책으로 차단) ----------
+# 기본 목록. SOC가 schomeguard-db(intel/sites.json)로 갱신하면 ProgramData\SCHomeGuard\db\intel\sites.json 을 우선 쓴다.
+$EmbeddedSites = @(
+    foreach ($d in 'softonic.com', 'softonic.kr', 'softonic.jp', 'softonic.com.br', 'softonic.fr', 'softonic.de', 'softonic.it', 'softonic.pl', 'softonic.nl') {
+        @{ Domain = $d; Category = '끼워팔기 다운로드'; Reason = '스폰서 설치파일로 원치 않는 프로그램·프록시웨어를 끼워 배포하는 다운로드 사이트'; Source = 'SuperCreative SOC 위협 분석' } }
+    @{ Domain = 'sftcdn.net'; Category = '끼워팔기 다운로드'; Reason = 'Softonic 다운로드 서버(CDN)'; Source = 'SuperCreative SOC 위협 분석' }
+    @{ Domain = 'insightjs.com'; Category = '악성 서버(IOC)'; Reason = 'NIKKE PC 런처 공급망 공격 로더·C2'; Source = 'SuperCreative SOC 위협 분석 · 공개 분석(GitHub MotherSphere, whykusanagi/nikke_malware)' }
+    @{ Domain = 'insightjs.org'; Category = '악성 서버(IOC)'; Reason = 'NIKKE PC 런처 공급망 공격 관련 도메인'; Source = 'SuperCreative SOC 위협 분석 · 공개 분석' }
+)
+function Get-RiskSites {
+    $f = Join-Path $env:ProgramData 'SCHomeGuard\db\intel\sites.json'
+    if (Test-Path $f) {
+        try {
+            $j = Get-Content $f -Raw -Encoding UTF8 | ConvertFrom-Json
+            $list = @($j.sites | Where-Object { $_.domain -match '^[a-z0-9.-]+\.[a-z]{2,}$' } | ForEach-Object { @{ Domain = $_.domain.ToLower(); Category = "$($_.category)"; Reason = "$($_.reason)"; Source = "$($_.source)" } })
+            if ($list.Count) { return $list }
+        } catch {}
+    }
+    return $EmbeddedSites
+}
+$SoftonicDomains = @(Get-RiskSites | ForEach-Object { $_.Domain })   # 이전 이름 호환 (v1.0 hosts 정리 등)
 $BrowserPolicy = [ordered]@{
     'Chrome' = 'HKLM:\SOFTWARE\Policies\Google\Chrome\URLBlocklist'
     'Edge'   = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge\URLBlocklist'
@@ -406,7 +450,7 @@ namespace SCHomeGuard {
 }
 $script:Findings = New-Object System.Collections.Generic.List[object]
 $script:Seen = @{}
-$KindOrder = @{ '실행 중인 프로세스' = 1; '서비스' = 2; '설치된 프로그램' = 3; '예약 작업' = 4; '자동 실행' = 5; '자동 실행 승인값' = 6; '방화벽 허용 규칙' = 7; '레지스트리 키' = 8; '설치 폴더' = 9; '프록시 SDK 포함 앱' = 9; '바로가기' = 10; '설치 파일' = 11; '사용 기록' = 12; '오류 덤프' = 13; '휴지통' = 14 }
+$KindOrder = @{ '랜섬웨어 흔적' = 0; 'Defender 설정' = 0; 'Defender 예외' = 0; '실행 중인 프로세스' = 1; '서비스' = 2; '설치된 프로그램' = 3; '예약 작업' = 4; '자동 실행' = 5; '자동 실행 승인값' = 6; '방화벽 허용 규칙' = 7; '레지스트리 키' = 8; '설치 폴더' = 9; '프록시 SDK 포함 앱' = 9; '바로가기' = 10; '설치 파일' = 11; '사용 기록' = 12; '오류 덤프' = 13; '휴지통' = 14 }
 function Add-Finding([string]$Sev, $Sig, [string]$Kind, [string]$Target, [string]$Detail, [hashtable]$Data) {
     $key = "$Kind|$Target"
     if ($script:Seen.ContainsKey($key)) { return }
@@ -442,7 +486,7 @@ function Invoke-Scan {
     Write-Log ("사용자 계정 {0}개, 레지스트리 하이브 {1}개를 검사합니다." -f $profiles.Count, $script:Hives.Count)
 
     # 1. 실행 중인 프로세스
-    Write-Log '[1/12] 실행 중인 프로그램'
+    Write-Log '[1/14] 실행 중인 프로그램'
     foreach ($p in Get-CimInstance Win32_Process -ErrorAction SilentlyContinue) {
         $s = Get-Sig "$($p.Name) $($p.ExecutablePath)"
         if ($s) { Add-Finding '위험' $s '실행 중인 프로세스' "$($p.ExecutablePath)" "PID $($p.ProcessId) · $($p.Name)" @{ Pid = $p.ProcessId; Path = $p.ExecutablePath } }
@@ -450,7 +494,7 @@ function Invoke-Scan {
     Update-Ui
 
     # 2. 설치된 프로그램(제거 정보)
-    Write-Log '[2/12] 설치된 프로그램 목록'
+    Write-Log '[2/14] 설치된 프로그램 목록'
     $uk = @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall')
     foreach ($h in $script:Hives) { $uk += "$($h.Root)\Software\Microsoft\Windows\CurrentVersion\Uninstall" }
     foreach ($k in $uk) {
@@ -466,7 +510,7 @@ function Invoke-Scan {
     Update-Ui
 
     # 3. 설치 폴더
-    Write-Log '[3/12] 설치 폴더'
+    Write-Log '[3/14] 설치 폴더'
     $bases = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramData, (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs'))
     foreach ($pr in $profiles) {
         foreach ($rel in 'AppData\Local', 'AppData\Local\Programs', 'AppData\Roaming', 'AppData\LocalLow', 'AppData\Roaming\Microsoft\Windows\Start Menu\Programs') { $bases += (Join-Path $pr $rel) }
@@ -485,7 +529,7 @@ function Invoke-Scan {
     Update-Ui
 
     # 4. 자동 실행(Run/RunOnce) + 승인값(StartupApproved)
-    Write-Log '[4/12] 자동 실행 등록'
+    Write-Log '[4/14] 자동 실행 등록'
     $runKeys = @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run', 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\RunOnce')
     $saKeys = @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run', 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run32')
     foreach ($h in $script:Hives) {
@@ -512,7 +556,7 @@ function Invoke-Scan {
     Update-Ui
 
     # 5. 예약 작업
-    Write-Log '[5/12] 예약 작업'
+    Write-Log '[5/14] 예약 작업'
     foreach ($t in Get-ScheduledTask -ErrorAction SilentlyContinue) {
         $acts = ($t.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join '; '
         $s = Get-Sig "$($t.TaskName) $($t.TaskPath) $acts"
@@ -521,7 +565,7 @@ function Invoke-Scan {
     Update-Ui
 
     # 6. 서비스
-    Write-Log '[6/12] 서비스'
+    Write-Log '[6/14] 서비스'
     foreach ($sv in Get-CimInstance Win32_Service -ErrorAction SilentlyContinue) {
         $s = Get-Sig "$($sv.Name) $($sv.DisplayName) $($sv.PathName)"
         if ($s) { Add-Finding '위험' $s '서비스' $sv.Name "$($sv.DisplayName) · $($sv.State)/$($sv.StartMode) · $($sv.PathName)" @{ Name = $sv.Name } }
@@ -529,7 +573,7 @@ function Invoke-Scan {
     Update-Ui
 
     # 7. 방화벽 허용 규칙
-    Write-Log '[7/12] 방화벽 허용 규칙'
+    Write-Log '[7/14] 방화벽 허용 규칙'
     try {
         foreach ($af in Get-NetFirewallApplicationFilter -PolicyStore PersistentStore -ErrorAction SilentlyContinue) {
             $s = Get-Sig $af.Program
@@ -542,7 +586,7 @@ function Invoke-Scan {
     Update-Ui
 
     # 8. 레지스트리 키(프로그램 설정)
-    Write-Log '[8/12] 레지스트리 설정 키'
+    Write-Log '[8/14] 레지스트리 설정 키'
     $swRoots = @('HKLM:\SOFTWARE', 'HKLM:\SOFTWARE\WOW6432Node')
     foreach ($h in $script:Hives) { $swRoots += "$($h.Root)\Software" }
     foreach ($r in $swRoots) {
@@ -554,7 +598,7 @@ function Invoke-Scan {
     Update-Ui
 
     # 9. 바로가기(바탕화면·시작 메뉴·시작프로그램)
-    Write-Log '[9/12] 바로가기'
+    Write-Log '[9/14] 바로가기'
     $lnkDirs = @((Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu'), (Join-Path $env:PUBLIC 'Desktop'))
     foreach ($pr in $profiles) { $lnkDirs += (Join-Path $pr 'Desktop'), (Join-Path $pr 'AppData\Roaming\Microsoft\Windows\Start Menu') }
     foreach ($ld in $lnkDirs | Where-Object { Test-Path -LiteralPath $_ }) {
@@ -567,7 +611,7 @@ function Invoke-Scan {
     Update-Ui
 
     # 10. 설치 파일·사용 기록·오류 덤프
-    Write-Log '[10/12] 설치 파일·사용 기록·오류 덤프'
+    Write-Log '[10/14] 설치 파일·사용 기록·오류 덤프'
     foreach ($pr in $profiles) {
         foreach ($rel in 'Downloads', 'Desktop') {
             foreach ($f in Get-ChildItem -LiteralPath (Join-Path $pr $rel) -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.exe', '.msi', '.zip' }) {
@@ -600,7 +644,7 @@ function Invoke-Scan {
     Update-Ui
 
     # 11. 휴지통
-    Write-Log '[11/12] 휴지통'
+    Write-Log '[11/14] 휴지통'
     foreach ($bin in Get-ChildItem -LiteralPath "$env:SystemDrive\`$Recycle.Bin" -Directory -Force -ErrorAction SilentlyContinue) {
         foreach ($i in Get-ChildItem -LiteralPath $bin.FullName -Force -Filter '$I*' -ErrorAction SilentlyContinue) {
             try {
@@ -614,7 +658,7 @@ function Invoke-Scan {
     Update-Ui
 
     # 12. 프록시 SDK가 들어 있는 다른 앱(의심)
-    Write-Log '[12/12] 프록시 SDK를 품은 앱(의심)'
+    Write-Log '[12/14] 프록시 SDK를 품은 앱(의심)'
     $sdkRoots = @($env:ProgramFiles, ${env:ProgramFiles(x86)})
     foreach ($pr in $profiles) { $sdkRoots += (Join-Path $pr 'AppData\Local\Programs'), (Join-Path $pr 'AppData\Roaming'), (Join-Path $pr 'AppData\Local') }
     $flagged = @($script:Findings | Where-Object { $_.Kind -eq '설치 폴더' } | ForEach-Object { $_.Target })
@@ -627,6 +671,54 @@ function Invoke-Scan {
         }
         Update-Ui
     }
+    # 13. 랜섬웨어 흔적 — 랜섬노트, 같은 낯선 확장자가 덧붙은 문서 다수. 복구에 필요하므로 지우지 않는다.
+    Write-Log '[13/14] 랜섬웨어 흔적(랜섬노트·암호화 의심 파일)'
+    $noteRx = '(?i)(decrypt|ransom|restore[_ -]?(my[_ -]?|your[_ -]?|all[_ -]?)?files|recover[_ -]?(my[_ -]?|your[_ -]?)?files|how[_ -]?to[_ -]?(back|recover|restore|decrypt|unlock|get)|unlock[_ -]?files|files[_ -]?(are[_ -]?)?encrypted|!!!)'
+    $docRx = '(?i)\.(docx?|xlsx?|pptx?|pdf|hwpx?|jpe?g|png|psd|txt|csv|zip|7z|mp4|mov|ai|dwg|sql|db|cell|show)\.([a-z0-9_-]{2,16})$'
+    $okSecond = 'bak', 'tmp', 'temp', 'old', 'lnk', 'part', 'crdownload', 'download', 'orig', 'backup', 'zip', '7z', 'gz', 'rar', 'bin', 'torrent', 'url', 'txt', 'pdf', 'png', 'jpg', 'md5', 'sha256', 'sig', 'asc', 'aria2', 'opdownload', 'dropbox', 'xmp', 'json'
+    $rdirs = 'Desktop', 'Documents', 'Pictures', 'Downloads', 'OneDrive'
+    foreach ($pr in $profiles) {
+        $exts = @{}; $n = 0
+        foreach ($rd in $rdirs) {
+            $root = Join-Path $pr $rd
+            if (-not (Test-Path -LiteralPath $root)) { continue }
+            foreach ($f in @(Get-ChildItem -LiteralPath $root -File -Recurse -Depth 3 -Force -ErrorAction SilentlyContinue | Select-Object -First 30000)) {
+                $n++
+                if ($f.Name -like "$DecoyBase*") { continue }
+                if ($f.Extension -match '^\.(txt|html?|hta|url|rtf)$' -and $f.BaseName -match $noteRx) {
+                    Add-Finding '위험' @{ Name = '랜섬웨어'; Pat = ''; Note = '' } '랜섬웨어 흔적' $f.FullName "랜섬노트로 보이는 파일 (수정 $($f.LastWriteTime.ToString('yyyy-MM-dd HH:mm')))" @{ Path = $f.FullName; NoRemove = $true }
+                }
+                if ($f.Name -match $docRx -and $okSecond -notcontains $Matches[2].ToLower()) {
+                    $e2 = $Matches[2].ToLower(); if (-not $exts.ContainsKey($e2)) { $exts[$e2] = New-Object System.Collections.ArrayList }; [void]$exts[$e2].Add($f.FullName)
+                }
+            }
+        }
+        foreach ($e2 in $exts.Keys) {
+            $c = $exts[$e2].Count
+            if ($c -ge 10) {
+                Add-Finding '위험' @{ Name = '랜섬웨어'; Pat = ''; Note = '' } '랜섬웨어 흔적' (Split-Path $exts[$e2][0] -Parent) ("문서·사진 뒤에 낯선 확장자 .{0}가 붙은 파일 {1}개 — 암호화됐을 수 있음 (예: {2})" -f $e2, $c, [IO.Path]::GetFileName($exts[$e2][0])) @{ Path = $exts[$e2][0]; NoRemove = $true }
+            }
+        }
+        Update-Ui
+    }
+    foreach ($f in $script:Findings) { if ($f.Kind -eq '랜섬웨어 흔적') { $f.Selected = $false } }
+    # 14. Windows Defender 상태·예외 폴더
+    Write-Log '[14/14] Windows Defender 상태·예외 폴더'
+    $h = Get-DefenderHealth
+    $dsig = @{ Name = 'Windows Defender'; Pat = ''; Note = '' }
+    foreach ($r in $h.Rows) {
+        if ($r.'판정' -ne '취약' -or $r.'항목' -eq 'Defender 예외 설정') { continue }
+        $fix = switch ($r.'항목') { '실시간 보호' { 'RealTime' } '동작 감시' { 'Behavior' } '다운로드·첨부 검사' { 'Ioav' } '보안 인텔리전스(서명)' { 'Signature' } default { '' } }
+        Add-Finding '위험' $dsig 'Defender 설정' $r.'항목' "$($r.'상태') — $($r.'조치')" @{ Fix = $fix }
+    }
+    foreach ($x in $h.Exclusions) {
+        if ($x.'판정' -eq '정상') { continue }
+        $why = $(if ($x._broad) { '넓은 범위·실행 형식 예외 — 악성코드가 숨기 좋은 설정' } else { '예외 폴더 안에 실행 파일 — Defender가 검사하지 않음' })
+        Add-Finding $(if ($x.'판정' -eq '위험') { '위험' } else { '의심' }) $dsig 'Defender 예외' "$($x.'종류'): $($x.'예외')" ("{0} · 실행 파일 {1}{2}" -f $why, $x.'실행 파일', $(if ($x.'예시') { " (예: $($x.'예시'))" } else { '' })) @{ ExKind = $x.'종류'; ExValue = $x.'예외' }
+    }
+    Update-Ui
+    $rw = @($script:Findings | Where-Object Kind -eq '랜섬웨어 흔적').Count
+    if ($rw) { Write-Log "랜섬웨어 흔적 $($rw)건 — 파일을 지우지 말고, 인터넷을 끊은 뒤 보안관제(SOC)에 알려 주세요." 'ERROR' }
     Dismount-UserHives
 
     $danger = @($script:Findings | Where-Object { $_.Severity -eq '위험' }).Count
@@ -674,6 +766,9 @@ function Save-Quarantine([string]$Path) {
 }
 function Invoke-Clean($Items, [bool]$RestorePoint = $true) {
     $items = @($Items | Sort-Object Order)
+    $keep = @($items | Where-Object { $_.Kind -eq '랜섬웨어 흔적' })
+    if ($keep.Count) { Write-Log "랜섬웨어 흔적 $($keep.Count)건은 지우지 않습니다 — 복구에 필요할 수 있습니다. 보안관제(SOC)에 알려 주세요." 'WARN' }
+    $items = @($items | Where-Object { $_.Kind -ne '랜섬웨어 흔적' })
     if ($items.Count -eq 0) { Write-Log '선택된 항목이 없습니다.' 'WARN'; return }
     Write-Log ("선택한 {0}개 항목을 제거합니다." -f $items.Count)
     if ($RestorePoint) {
@@ -690,6 +785,20 @@ function Invoke-Clean($Items, [bool]$RestorePoint = $true) {
         $d = $f.Data
         try {
             switch ($f.Kind) {
+                'Defender 예외' {
+                    switch ($d.ExKind) { '폴더' { Remove-MpPreference -ExclusionPath $d.ExValue -ErrorAction Stop } '프로세스' { Remove-MpPreference -ExclusionProcess $d.ExValue -ErrorAction Stop } '확장자' { Remove-MpPreference -ExclusionExtension $d.ExValue -ErrorAction Stop } }
+                    Write-Log "Defender 예외 삭제: $($d.ExKind) $($d.ExValue) (파일은 그대로)"
+                }
+                'Defender 설정' {
+                    switch ($d.Fix) {
+                        'RealTime' { Set-MpPreference -DisableRealtimeMonitoring $false -ErrorAction Stop }
+                        'Behavior' { Set-MpPreference -DisableBehaviorMonitoring $false -ErrorAction Stop }
+                        'Ioav' { Set-MpPreference -DisableIOAVProtection $false -ErrorAction Stop }
+                        'Signature' { Update-MpSignature -ErrorAction Stop }
+                        default { throw 'Windows 보안 앱에서 직접 켜 주세요' }
+                    }
+                    Write-Log "Defender 설정 복구: $($f.Target)"
+                }
                 '실행 중인 프로세스' { Stop-Process -Id $d.Pid -Force -ErrorAction Stop; Write-Log "종료: $($f.Target)" }
                 '서비스' { Stop-Service -Name $d.Name -Force -ErrorAction SilentlyContinue; & sc.exe delete $d.Name | Out-Null; Write-Log "서비스 삭제: $($d.Name)" }
                 '설치된 프로그램' {
@@ -753,7 +862,19 @@ function Remove-LegacyHosts {
         Write-Log '이전 버전(v1.0)이 hosts 파일에 넣은 차단 항목을 정리했습니다.' 'OK'
     } catch { Write-Log "hosts 정리 실패: $($_.Exception.Message)" 'WARN' }
 }
-function Set-SoftonicBlock([bool]$Enable) {
+function Set-SiteBlock([bool]$Enable) {
+    $sites = @(Get-RiskSites | ForEach-Object { $_.Domain })
+    $prev = @((Get-State).SiteBlockDomains)
+    # 끌 때, 또는 목록에서 빠진 도메인: 우리가 넣었던 것만 지운다
+    $SoftonicDomains = $(if ($Enable) { $sites } else { @($sites + $prev | Sort-Object -Unique) })
+    $stale = @($prev | Where-Object { $_ -and $sites -notcontains $_ })
+    foreach ($b in $BrowserPolicy.Keys) {
+        $k = $BrowserPolicy[$b]
+        if ($Enable -and $stale.Count -and (Test-Path $k)) {
+            $item = Get-Item -LiteralPath $k
+            foreach ($n in $item.GetValueNames()) { if ($stale -contains "$($item.GetValue($n))") { Remove-ItemProperty -LiteralPath $k -Name $n -Force } }
+        }
+    }
     foreach ($b in $BrowserPolicy.Keys) {
         $k = $BrowserPolicy[$b]
         if ($Enable) {
@@ -778,18 +899,29 @@ function Set-SoftonicBlock([bool]$Enable) {
         $item = Get-Item -LiteralPath $FirefoxBlockKey
         foreach ($n in $item.GetValueNames()) { if ($ffPatterns -contains "$($item.GetValue($n))") { Remove-ItemProperty -LiteralPath $FirefoxBlockKey -Name $n -Force } }
     }
-    Write-Log ("Softonic 차단 {0}: 브라우저 정책(Chrome·Edge·Whale·Brave·Firefox)" -f $(if ($Enable) { '적용' } else { '해제' })) 'OK'
+    Set-StateValue 'SiteBlockDomains' $(if ($Enable) { $sites } else { @() })
+    Write-Log ("위험 사이트 차단 {0}: {1}개 도메인, 브라우저 정책(Chrome·Edge·Whale·Brave·Firefox)" -f $(if ($Enable) { '적용' } else { '해제' }), $SoftonicDomains.Count) 'OK'
     if ($Enable) { Write-Log '  브라우저를 다시 열면 적용됩니다. 브라우저에 "조직에서 관리" 표시가 생길 수 있습니다(정상).' }
 }
-function Test-SoftonicBlock {
+function Test-SiteBlock {
     $k = $BrowserPolicy['Chrome']
     if (-not (Test-Path $k)) { return $false }
     $item = Get-Item -LiteralPath $k
-    return [bool](@($item.GetValueNames() | ForEach-Object { "$($item.GetValue($_))" }) -contains 'softonic.com')
+    $vals = @($item.GetValueNames() | ForEach-Object { "$($item.GetValue($_))" })
+    return [bool]($vals -contains 'softonic.com' -or @((Get-State).SiteBlockDomains | Where-Object { $vals -contains $_ }).Count)
+}
+function Get-SocBph {
+    # SOC 방탄호스팅 목록: 서명 확인된 DB(db\intel\bph.txt)가 있으면 그것, 없으면 내장 스냅샷
+    $f = Join-Path $DbDir 'intel\bph.txt'
+    if (Test-Path $f) {
+        $l = @(Get-Content $f -Encoding UTF8 | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') -and $_ -match '^[0-9a-fA-F:.]+/\d+$' })
+        if ($l.Count -gt 10) { return $l }
+    }
+    return $EmbeddedBph
 }
 function Get-BphList([bool]$Online = $true) {
     $set = New-Object 'System.Collections.Generic.HashSet[string]'
-    foreach ($c in $EmbeddedBph) { [void]$set.Add($c) }
+    foreach ($c in @(Get-SocBph)) { [void]$set.Add($c) }
     $got = $false
     if ($Online) {
         foreach ($u in 'https://www.spamhaus.org/drop/drop_v4.json', 'https://www.spamhaus.org/drop/drop_v6.json') {
@@ -797,7 +929,7 @@ function Get-BphList([bool]$Online = $true) {
                 $r = Invoke-WebRequest -Uri $u -UseBasicParsing -TimeoutSec 30 -ErrorAction Stop
                 $n = 0
                 foreach ($line in ($r.Content -split "`n")) { if ($line -match '"cidr"\s*:\s*"([^"]+)"') { [void]$set.Add($Matches[1]); $n++ } }
-                Write-Log "  Spamhaus 최신 목록 $n개 받음 ($u)"
+                Write-Log "  Spamhaus 최신 목록 $($n)개 받음 ($u)"
                 if ($n -gt 100) { $got = $true }
             } catch { Write-Log "  Spamhaus 목록 받기 실패: $($_.Exception.Message)" 'WARN' }
         }
@@ -805,10 +937,53 @@ function Get-BphList([bool]$Online = $true) {
     if (-not $got) { foreach ($c in $EmbeddedDrop) { [void]$set.Add($c) }; Write-Log '  내장 목록(2026-10-13 스냅샷)을 사용합니다.' 'WARN' }
     return @($set)
 }
+
+# ---------- 감사 정책 (하위 범주 GUID 사용: 이름은 언어마다 다르다) ----------
+$AuditWfpConn = '{0CCE9226-69AE-11D9-BED3-505054503030}'   # 필터링 플랫폼 연결 → 5157(차단된 연결, 프로그램 경로 포함)
+$AuditFileSys = '{0CCE921D-69AE-11D9-BED3-505054503030}'   # 파일 시스템 → 4663(미끼 파일 접근)
+function Get-AuditFlags([string]$Guid) {
+    $line = @(& auditpol.exe /get /subcategory:$Guid /r 2>$null | Select-Object -Skip 1 | Where-Object { $_ }) | Select-Object -First 1
+    $v = "$line"
+    @{ Success = ($v -match 'Success|성공'); Failure = ($v -match 'Failure|실패') }
+}
+function Set-AuditFlags([string]$Guid, [bool]$Success, [bool]$Failure) {
+    & auditpol.exe /set /subcategory:$Guid /success:$(if ($Success) { 'enable' } else { 'disable' }) /failure:$(if ($Failure) { 'enable' } else { 'disable' }) | Out-Null
+}
+function Use-Audit([string]$Guid, [string]$StateKey, [bool]$Enable, [bool]$Success, [bool]$Failure) {
+    # 켤 때 원래 값을 저장하고 필요한 쪽만 켠다. 끌 때 원래 값으로 되돌린다.
+    $st = Get-State
+    if ($Enable) {
+        $cur = Get-AuditFlags $Guid
+        if ($null -eq $st.$StateKey) { Set-StateValue $StateKey @{ Success = [bool]$cur.Success; Failure = [bool]$cur.Failure } }
+        Set-AuditFlags $Guid ($Success -or $cur.Success) ($Failure -or $cur.Failure)
+    } elseif ($null -ne $st.$StateKey) {
+        Set-AuditFlags $Guid ([bool]$st.$StateKey.Success) ([bool]$st.$StateKey.Failure)
+        Set-StateValue $StateKey $null
+    }
+}
+function Set-FirewallDropLog([bool]$Enable) {
+    # 방탄호스팅 차단 '기록'을 보려면 방화벽의 차단 패킷 로그가 켜져 있어야 한다. 켤 때 원래 값을 저장하고, 끌 때 되돌린다.
+    try {
+        $st = Get-State
+        if ($Enable) {
+            if ($null -eq $st.FwLogOriginal) {
+                Set-StateValue 'FwLogOriginal' @(Get-NetFirewallProfile | ForEach-Object { @{ Name = "$($_.Name)"; LogBlocked = "$($_.LogBlocked)"; LogMaxSizeKilobytes = [int]$_.LogMaxSizeKilobytes } })
+            }
+            Set-NetFirewallProfile -All -LogBlocked True -LogMaxSizeKilobytes 16384 -ErrorAction Stop
+            Write-Log '  방화벽 차단 기록(pfirewall.log)을 켰습니다 — 상세 보기에서 차단된 접속을 볼 수 있습니다.'
+        } elseif ($null -ne $st.FwLogOriginal) {
+            foreach ($o in @($st.FwLogOriginal)) { Set-NetFirewallProfile -Name $o.Name -LogBlocked $o.LogBlocked -LogMaxSizeKilobytes $o.LogMaxSizeKilobytes -ErrorAction SilentlyContinue }
+            Set-StateValue 'FwLogOriginal' $null
+            Write-Log '  방화벽 차단 기록 설정을 원래대로 되돌렸습니다.'
+        }
+    } catch { Write-Log "방화벽 차단 기록 설정 실패(회사 정책으로 관리되는 PC일 수 있음): $($_.Exception.Message)" 'WARN' }
+}
 function Set-BphBlock([bool]$Enable) {
     Get-NetFirewallRule -Group 'SCHomeGuard-BPH' -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
     Unregister-ScheduledTask -TaskName 'SCHomeGuard BPH 목록 갱신' -Confirm:$false -ErrorAction SilentlyContinue
-    if (-not $Enable) { Write-Log '방탄호스팅 차단 해제: 방화벽 규칙·자동 갱신 작업 삭제' 'OK'; return }
+    if (-not $Enable) { Set-FirewallDropLog $false; Use-Audit $AuditWfpConn 'WfpAuditOriginal' $false $false $false; Write-Log '방탄호스팅 차단 해제: 방화벽 규칙·자동 갱신 작업 삭제' 'OK'; return }
+    Set-FirewallDropLog $true
+    try { Use-Audit $AuditWfpConn 'WfpAuditOriginal' $true $false $true; Write-Log '  차단된 연결의 프로그램을 알 수 있도록 Windows 감사(필터링 플랫폼 연결 실패)를 켰습니다.' } catch { Write-Log "감사 정책 설정 실패: $($_.Exception.Message)" 'WARN' }
     Write-Log '방탄호스팅·Spamhaus DROP 목록을 준비합니다.'
     $list = Get-BphList
     $chunks = [Math]::Ceiling($list.Count / 500)
@@ -850,11 +1025,508 @@ function Set-PuaProtection([bool]$Enable) {
     } catch { Write-Log "Defender 설정 실패(다른 백신을 쓰는 경우 정상): $($_.Exception.Message)" 'WARN' }
 }
 function Test-PuaProtection { try { return ((Get-MpPreference -ErrorAction Stop).PUAProtection -eq 1) } catch { return $false } }
+
+# ---------- 랜섬웨어 보호 ----------
+$DecoyTask = 'SCHomeGuard 랜섬웨어 미끼 감시'
+$DecoyBase = '!SCHomeGuard_보호파일_건드리지_마세요'
+$AlertFile = Join-Path $DataDir 'ransom_alerts.jsonl'
+function Get-DecoyDirs {
+    $subs = 'Desktop', 'Documents', 'Pictures', 'OneDrive\Desktop', 'OneDrive\Documents', 'OneDrive\Pictures', 'OneDrive\바탕 화면', 'OneDrive\문서', 'OneDrive\사진'
+    foreach ($pr in @(Get-ProfileDirs)) {
+        foreach ($sd in $subs) { $d = Join-Path $pr $sd; if (Test-Path -LiteralPath $d -PathType Container) { $d } }
+        foreach ($od in @(Get-ChildItem -LiteralPath $pr -Directory -Filter 'OneDrive - *' -ErrorAction SilentlyContinue)) {
+            foreach ($sd in 'Desktop', 'Documents', 'Pictures', '바탕 화면', '문서', '사진') { $d = Join-Path $od.FullName $sd; if (Test-Path -LiteralPath $d -PathType Container) { $d } }
+        }
+    }
+}
+function New-Decoy([string]$Dir) {
+    $ext = $(if ($Dir -match '(Pictures|사진)$') { 'jpg' } else { 'docx' })
+    $f = Join-Path $Dir "$DecoyBase.$ext"
+    if (Test-Path -LiteralPath $f) { [IO.File]::SetAttributes($f, 'Normal'); Remove-Item -LiteralPath $f -Force }
+    [IO.File]::WriteAllText($f, "슈크인 홈 PC 프로텍터(SCHomeGuard) 랜섬웨어 감시용 미끼 파일입니다.`r`n이 파일을 열거나 지우지 마세요. 바뀌면 랜섬웨어로 보고 경고합니다.`r`n", [Text.Encoding]::UTF8)
+    [IO.File]::SetAttributes($f, 'Hidden')
+    $acl = Get-Acl -LiteralPath $f -Audit
+    $everyone = New-Object Security.Principal.SecurityIdentifier('S-1-1-0')
+    $acl.AddAuditRule((New-Object Security.AccessControl.FileSystemAuditRule($everyone, 'WriteData, AppendData, Delete', 'None', 'None', 'Success')))
+    Set-Acl -LiteralPath $f -AclObject $acl
+    @{ Path = $f; Hash = (Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash }
+}
+function Register-DecoyTask($Paths) {
+    $or = ($Paths | ForEach-Object { "Data[@Name='ObjectName']='$($_ -replace "'", '')'" }) -join ' or '
+    $q = "<QueryList><Query Id=`"0`" Path=`"Security`"><Select Path=`"Security`">*[System[(EventID=4663)]] and *[EventData[$or]]</Select></Query></QueryList>"
+    $xml = @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>슈크인의 홈 PC 프로텍터: 랜섬웨어 미끼 파일이 바뀌면 경고</Description></RegistrationInfo>
+  <Triggers><EventTrigger><Enabled>true</Enabled><Subscription>$([Security.SecurityElement]::Escape($q))</Subscription></EventTrigger></Triggers>
+  <Principals><Principal id="Author"><UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel></Principal></Principals>
+  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><ExecutionTimeLimit>PT5M</ExecutionTimeLimit><Enabled>true</Enabled></Settings>
+  <Actions Context="Author"><Exec><Command>$PsExe</Command><Arguments>-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$InstalledScript" -Cli -Action DecoyAlert</Arguments></Exec></Actions>
+</Task>
+"@
+    Register-ScheduledTask -TaskName $DecoyTask -Xml $xml -Force -ErrorAction Stop | Out-Null
+}
+function Set-RansomProtection([bool]$Enable) {
+    $st = Get-State
+    # 미끼를 만들고 지우는 동안 경고가 나지 않도록 감시 작업부터 내린다
+    Unregister-ScheduledTask -TaskName $DecoyTask -Confirm:$false -ErrorAction SilentlyContinue
+    # 제어된 폴더 액세스가 켜져 있으면 우리 미끼 파일 교체도 막힌다 → 몇 초 동안만 감사 모드로 (PowerShell을 허용 목록에 넣지 않는다)
+    $cfaNow = $(try { [int](Get-MpPreference -ErrorAction Stop).EnableControlledFolderAccess } catch { -1 })
+    if ($cfaNow -eq 1) { try { Set-MpPreference -EnableControlledFolderAccess AuditMode -ErrorAction Stop; Start-Sleep -Milliseconds 500 } catch {} }
+    foreach ($d in @($st.Decoys)) { if ($d.Path -and (Test-Path -LiteralPath $d.Path)) { try { [IO.File]::SetAttributes($d.Path, 'Normal'); Remove-Item -LiteralPath $d.Path -Force } catch {} } }
+    Set-StateValue 'Decoys' @()
+    if (-not $Enable) {
+        Use-Audit $AuditFileSys 'FsAuditOriginal' $false $false $false
+        try {
+            if ($null -ne $st.CfaOriginal) { Set-MpPreference -EnableControlledFolderAccess ([int]$st.CfaOriginal) -ErrorAction Stop; Set-StateValue 'CfaOriginal' $null }
+            elseif ($cfaNow -eq 1) { Set-MpPreference -EnableControlledFolderAccess Enabled -ErrorAction Stop }   # 원래 켜져 있던 PC는 그대로
+        } catch {}
+        Write-Log '랜섬웨어 보호 해제: 미끼 파일·감시 작업 삭제, 제어된 폴더 액세스·감사 설정 원래대로' 'OK'
+        return
+    }
+    try {
+        if ($null -eq $st.CfaOriginal) { Set-StateValue 'CfaOriginal' $(if ($cfaNow -ge 0) { $cfaNow } else { 0 }) }
+        Write-Log '  제어된 폴더 액세스 켜짐 — 허락 없는 프로그램은 문서·사진·바탕화면을 바꿀 수 없습니다(게임 저장이 막히면 Windows 보안 알림에서 허용).'
+    } catch { Write-Log "제어된 폴더 액세스 설정 실패(다른 백신을 쓰는 PC면 정상): $($_.Exception.Message)" 'WARN' }
+    Use-Audit $AuditFileSys 'FsAuditOriginal' $true $true $false
+    Install-Self
+    $decoys = @(foreach ($dir in @(Get-DecoyDirs | Sort-Object -Unique)) { try { New-Decoy $dir } catch { Write-Log "미끼 파일 만들기 실패($dir): $($_.Exception.Message)" 'WARN' } })
+    Set-StateValue 'Decoys' $decoys
+    try { Set-MpPreference -EnableControlledFolderAccess Enabled -ErrorAction Stop } catch {}
+    if ($decoys.Count) {
+        try { Register-DecoyTask @($decoys | ForEach-Object { $_.Path }); Write-Log ("  미끼 파일 {0}개를 두고 감시를 시작했습니다(숨김 파일)." -f $decoys.Count) }
+        catch { Write-Log "미끼 감시 작업 등록 실패: $($_.Exception.Message)" 'WARN' }
+    }
+    Write-Log '랜섬웨어 보호 적용' 'OK'
+}
+function Test-RansomProtection {
+    $task = [bool](Get-ScheduledTask -TaskName $DecoyTask -ErrorAction SilentlyContinue)
+    $cfa = $(try { (Get-MpPreference -ErrorAction Stop).EnableControlledFolderAccess -eq 1 } catch { $false })
+    return ($task -or $cfa)
+}
+function Show-UserAlert([string]$Text) {
+    # SYSTEM 작업에서 로그인한 사용자 화면으로: msg.exe(Pro 이상) → 없으면 사용자 세션 작업으로 메시지 상자
+    $msg = Join-Path $env:SystemRoot 'System32\msg.exe'
+    if (Test-Path $msg) { & $msg * /TIME:0 $Text 2>$null; if ($LASTEXITCODE -eq 0) { return } }
+    try {
+        $f = Join-Path $DataDir 'alert.txt'; Set-Content -Path $f -Value $Text -Encoding UTF8
+        $cmd = "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show((Get-Content '$f' -Raw -Encoding UTF8), '슈크인의 홈 PC 프로텍터 — 랜섬웨어 경고', 'OK', 'Error') | Out-Null"
+        $act = New-ScheduledTaskAction -Execute $PsExe -Argument "-NoProfile -WindowStyle Hidden -Command `"$cmd`""
+        $pri = New-ScheduledTaskPrincipal -GroupId 'S-1-5-32-545' -RunLevel Limited
+        Register-ScheduledTask -TaskName 'SCHomeGuard 경고 표시' -Action $act -Principal $pri -Force | Out-Null
+        Start-ScheduledTask -TaskName 'SCHomeGuard 경고 표시'
+        Start-Sleep 5; Unregister-ScheduledTask -TaskName 'SCHomeGuard 경고 표시' -Confirm:$false -ErrorAction SilentlyContinue
+    } catch {}
+}
+function Invoke-DecoyAlert {
+    $st = Get-State
+    $paths = @($st.Decoys | ForEach-Object { $_.Path })
+    if (-not $paths.Count) { return }
+    $last = [long]$(if ($st.LastDecoyRecord) { $st.LastDecoyRecord } else { 0 })
+    $ev = @(Get-WinEvent -FilterHashtable @{ LogName = 'Security'; Id = 4663; StartTime = (Get-Date).AddMinutes(-15) } -ErrorAction SilentlyContinue | Where-Object { $_.RecordId -gt $last })
+    $new = @()
+    foreach ($e in ($ev | Sort-Object RecordId)) {
+        $x = [xml]$e.ToXml(); $d = @{}; foreach ($n in $x.Event.EventData.Data) { $d[$n.Name] = $n.'#text' }
+        if ($paths -notcontains $d.ObjectName) { continue }
+        $pidv = $(try { [Convert]::ToInt32("$($d.ProcessId)", 16) } catch { 0 })
+        $rec = [ordered]@{ Time = $e.TimeCreated.ToString('yyyy-MM-dd HH:mm:ss'); Process = $d.ProcessName; Pid = $pidv; User = "$($d.SubjectDomainName)\$($d.SubjectUserName)"; File = $d.ObjectName; Access = $d.AccessMask; Record = $e.RecordId }
+        Add-Content -Path $AlertFile -Value ($rec | ConvertTo-Json -Compress) -Encoding UTF8
+        $new += $rec; $last = [Math]::Max($last, $e.RecordId)
+    }
+    Set-StateValue 'LastDecoyRecord' $last
+    if (-not $new.Count) { return }
+    $procs = ($new | ForEach-Object { [IO.Path]::GetFileName($_.Process) } | Sort-Object -Unique) -join ', '
+    Write-Log "랜섬웨어 의심: $procs 이(가) 미끼 파일을 바꿨습니다." 'ERROR'
+    if ($st.KillOnDecoy) {
+        foreach ($r in $new) { $pn = [IO.Path]::GetFileName($r.Process); if ($pn -notin 'explorer.exe', 'System', 'MsMpEng.exe') { try { Stop-Process -Id $r.Pid -Force -ErrorAction Stop; Write-Log "  의심 프로세스 종료: $pn ($($r.Pid))" 'WARN' } catch {} } }
+    }
+    Show-UserAlert ("[랜섬웨어 의심] '{0}' 프로그램이 보호용 미끼 파일을 바꿨습니다.`n`n1. 지금 바로 인터넷(랜선·Wi-Fi)을 끊으세요.`n2. 하던 작업을 저장하지 말고, PC를 끄지 말고 그대로 두세요.`n3. 보안관제(SOC)에 연락하세요.`n`n프로그램 경로: {1}" -f $procs, (($new | ForEach-Object { $_.Process } | Sort-Object -Unique) -join ', '))
+}
+function Get-RansomDetail {
+    $st = Get-State
+    $mode = @{ 0 = '꺼짐'; 1 = '차단'; 2 = '감사(기록만)'; 3 = '디스크 수정만 차단'; 4 = '디스크 수정만 감사' }
+    $cfa = $(try { [int](Get-MpPreference -ErrorAction Stop).EnableControlledFolderAccess } catch { -1 })
+    $task = Get-ScheduledTask -TaskName $DecoyTask -ErrorAction SilentlyContinue
+    $decoys = @($st.Decoys)
+    $intact = @($decoys | Where-Object { $_.Path -and (Test-Path -LiteralPath $_.Path) -and (Get-FileHash -LiteralPath $_.Path -Algorithm SHA256).Hash -eq $_.Hash }).Count
+    $sp = $(try { @(Get-ComputerRestorePoint -ErrorAction Stop) } catch { @() })
+    $shadow = @(Get-CimInstance Win32_ShadowCopy -ErrorAction SilentlyContinue).Count
+    $ransomDet = $(try { @(Get-MpThreat -ErrorAction Stop | Where-Object { $_.ThreatName -match '^Ransom' }).Count } catch { 0 })
+    $fs = Get-AuditFlags $AuditFileSys
+    $ready = @(
+        [pscustomobject][ordered]@{ '항목' = '제어된 폴더 액세스'; '상태' = $(if ($cfa -ge 0) { $mode[$cfa] } else { '알 수 없음(다른 백신)' }); '설명' = '허락 없는 프로그램이 문서·사진·바탕화면 파일을 바꾸지 못하게 막음' }
+        [pscustomobject][ordered]@{ '항목' = '미끼 파일 감시'; '상태' = $(if ($task) { "켜짐 · 미끼 $($decoys.Count)개 중 정상 $($intact)개" } else { '꺼짐' }); '설명' = '숨긴 미끼 파일이 바뀌면 즉시 경고' }
+        [pscustomobject][ordered]@{ '항목' = '파일 시스템 감사'; '상태' = $(if ($fs.Success) { '켜짐' } else { '꺼짐' }); '설명' = '미끼 파일을 바꾼 프로그램을 기록(이벤트 4663)' }
+        [pscustomobject][ordered]@{ '항목' = '시스템 복원 지점'; '상태' = $(if ($sp.Count) { "$($sp.Count)개, 최근 $($sp[-1].ConvertToDateTime($sp[-1].CreationTime).ToString('yyyy-MM-dd'))" } else { '없음' }); '설명' = '설정·프로그램 되돌리기용(문서 백업은 아님)' }
+        [pscustomobject][ordered]@{ '항목' = '섀도 복사본'; '상태' = "$($shadow)개"; '설명' = '랜섬웨어는 먼저 이것부터 지움 — 0개면 복구 수단이 적음' }
+        [pscustomobject][ordered]@{ '항목' = 'Defender 랜섬웨어 탐지'; '상태' = "$($ransomDet)건"; '설명' = '과거 Defender가 잡은 랜섬웨어' }
+    )
+    $alerts = @(if (Test-Path $AlertFile) { Get-Content $AlertFile -Encoding UTF8 | Where-Object { $_ } | ForEach-Object { $a = $_ | ConvertFrom-Json; [pscustomobject][ordered]@{ '시각' = $a.Time; '프로그램' = $a.Process; 'PID' = $a.Pid; '사용자' = $a.User; '미끼 파일' = $a.File } } })
+    $blocks = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; Id = 1123, 1124 } -MaxEvents 500 -ErrorAction SilentlyContinue | ForEach-Object {
+        $x = [xml]$_.ToXml(); $d = @{}; foreach ($n in $x.Event.EventData.Data) { $d[$n.Name] = $n.'#text' }
+        [pscustomobject][ordered]@{ '시각' = $_.TimeCreated.ToString('yyyy-MM-dd HH:mm:ss'); '결과' = $(if ($_.Id -eq 1123) { '차단' } else { '감사(허용됨)' }); '프로그램' = $d['Process Name']; '대상' = $d['Path']; '사용자' = $d['User'] } })
+    $files = @($decoys | ForEach-Object { [pscustomobject][ordered]@{ '미끼 파일' = $_.Path; '상태' = $(if (-not (Test-Path -LiteralPath $_.Path)) { '없음(지워짐)' } elseif ((Get-FileHash -LiteralPath $_.Path -Algorithm SHA256).Hash -ne $_.Hash) { '바뀜' } else { '정상' }) } })
+    $intro = "제어된 폴더 액세스: $(if ($cfa -ge 0) { $mode[$cfa] } else { '알 수 없음' }) · 미끼 감시: $(if ($task) { '켜짐' } else { '꺼짐' }) · 미끼 경고 $($alerts.Count)건 · 폴더 보호 차단 $(@($blocks | Where-Object { $_.'결과' -eq '차단' }).Count)건. 경고가 뜨면 인터넷을 끊고 PC를 끄지 말고 보안관제에 알려 주세요."
+    @{ Intro = $intro; Sections = [ordered]@{ '대비 상태' = $ready; "미끼 경고 ($($alerts.Count))" = $alerts; "폴더 보호 차단 ($($blocks.Count))" = $blocks; "미끼 파일 ($($files.Count))" = $files } }
+}
+
+# ---------- 자동 업데이트 ----------
+function Invoke-Download([string]$Url, [string]$OutFile) {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    Invoke-WebRequest -Uri $Url -OutFile $OutFile -Headers @{ 'User-Agent' = "SCHomeGuard/$(Get-NumVer $Version)" } -UseBasicParsing -TimeoutSec 120 -ErrorAction Stop
+}
+function Test-SignedFile([string]$File, [string]$SigFile, [string]$PubXml) {
+    $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider
+    try { $rsa.FromXmlString($PubXml); return $rsa.VerifyData([IO.File]::ReadAllBytes($File), 'SHA256', [IO.File]::ReadAllBytes($SigFile)) }
+    catch { return $false } finally { $rsa.Dispose() }
+}
+function Update-Self {
+    $tmp = Join-Path $env:TEMP "schg_upd_$PID"; New-Item -ItemType Directory -Force $tmp | Out-Null
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        $rel = Invoke-RestMethod "https://api.github.com/repos/$UpdateRepo/releases/latest" -Headers @{ 'User-Agent' = 'SCHomeGuard' } -TimeoutSec 60 -ErrorAction Stop
+        $new = Get-NumVer $rel.tag_name
+        $base = @((Get-NumVer $Version), (Get-ScriptVer $InstalledScript)) | Sort-Object -Descending | Select-Object -First 1
+        if ($new -le $base) { Write-Log "홈가드는 최신 버전입니다($base)."; return $false }
+        $get = { param($n) $a = @($rel.assets | Where-Object name -eq $n)[0]; if (-not $a) { throw "릴리스에 $n 파일이 없습니다" }; $f = Join-Path $tmp $n; Invoke-Download $a.browser_download_url $f; $f }
+        $mf = & $get 'manifest.json'; $sg = & $get 'manifest.sig'
+        if (-not (Test-SignedFile $mf $sg $ReleasePubKey)) { throw '릴리스 서명이 맞지 않아 적용하지 않습니다' }
+        $m = Get-Content $mf -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ((Get-NumVer $m.version) -ne $new) { throw '서명된 매니페스트의 버전이 릴리스 태그와 다릅니다' }
+        $e = @($m.files | Where-Object name -eq 'SCHomeGuard.ps1')[0]
+        $ps = & $get 'SCHomeGuard.ps1'
+        if ((Get-FileHash $ps -Algorithm SHA256).Hash.ToLower() -ne "$($e.sha256)".ToLower()) { throw 'SHA-256이 서명된 매니페스트와 다릅니다' }
+        if ((Get-ScriptVer $ps) -ne $new) { throw '받은 스크립트의 버전이 다릅니다' }
+        Copy-Item $ps "$InstalledScript.new" -Force
+        Move-Item "$InstalledScript.new" $InstalledScript -Force
+        Set-StateValue 'LastSelfUpdate' @{ From = "$base"; To = "$new"; Time = (Get-Date).ToString('yyyy-MM-dd HH:mm') }
+        Write-Log "홈가드를 $base → $new 로 업데이트했습니다(서명·해시 확인). 다음 실행부터 적용됩니다." 'OK'
+        return $true
+    } catch { Write-Log "홈가드 업데이트 실패: $($_.Exception.Message)" 'WARN'; return $false }
+    finally { Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue }
+}
+function Update-Db {
+    $tmp = Join-Path $env:TEMP "schg_db_$PID"; New-Item -ItemType Directory -Force $tmp | Out-Null
+    try {
+        $base = "https://raw.githubusercontent.com/$DbRepo/main"
+        $mf = Join-Path $tmp 'manifest.json'; $sg = Join-Path $tmp 'manifest.sig'
+        Invoke-Download "$base/manifest.json" $mf; Invoke-Download "$base/manifest.sig" $sg
+        if (-not (Test-SignedFile $mf $sg $DbPubKey)) { throw '위협 목록 서명이 맞지 않아 적용하지 않습니다' }
+        $m = Get-Content $mf -Raw -Encoding UTF8 | ConvertFrom-Json
+        $cur = "$((Get-State).DbVersion)"
+        if ($cur -and (Get-NumVer $m.version) -le (Get-NumVer $cur)) { Write-Log "위협 목록은 최신입니다($cur)."; return $false }
+        $staged = @()
+        foreach ($f in @($m.files)) {
+            if ($f.path -notmatch '^(intel|models)/[\w./-]+$' -or $f.path -match '\.\.') { throw "허용되지 않는 경로: $($f.path)" }
+            $t = Join-Path $tmp ($f.path -replace '/', '\')
+            New-Item -ItemType Directory -Force (Split-Path $t) | Out-Null
+            Invoke-Download "$base/$($f.path)" $t
+            if ((Get-FileHash $t -Algorithm SHA256).Hash.ToLower() -ne "$($f.sha256)".ToLower()) { throw "SHA-256 불일치: $($f.path) (갱신 중일 수 있어 다음에 다시 시도)" }
+            $staged += @{ Src = $t; Dst = Join-Path $DbDir ($f.path -replace '/', '\') }
+        }
+        foreach ($x in $staged) { New-Item -ItemType Directory -Force (Split-Path $x.Dst) | Out-Null; Copy-Item $x.Src $x.Dst -Force }
+        Copy-Item $mf (Join-Path $DbDir 'manifest.json') -Force
+        Set-StateValue 'DbVersion' "$($m.version)"
+        Write-Log "위협 목록을 $(if ($cur) { $cur } else { '내장' }) → $($m.version) 로 갱신했습니다(서명·해시 확인, 파일 $($staged.Count)개)." 'OK'
+        return $true
+    } catch { Write-Log "위협 목록 갱신 실패: $($_.Exception.Message)" 'WARN'; return $false }
+    finally { Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue }
+}
+function Invoke-AutoUpdate {
+    Write-Log '업데이트 확인 중…'
+    $self = Update-Self
+    $db = Update-Db
+    if ($db) {
+        if (Test-SiteBlock) { Set-SiteBlock $true }
+        if (Test-BphBlock) { Set-BphBlock $true }
+    }
+    Set-StateValue 'LastUpdateCheck' (Get-Date).ToString('yyyy-MM-dd HH:mm')
+    @{ Self = $self; Db = $db }
+}
+
+# ---------- Windows Defender 보안 상태·예외 ----------
+$ExecExt = '.exe', '.dll', '.scr', '.com', '.pif', '.cpl', '.msi', '.msp', '.ps1', '.psm1', '.bat', '.cmd', '.vbs', '.vbe', '.js', '.jse', '.wsf', '.hta', '.jar', '.sys', '.lnk'
+function Get-AvProducts {
+    # Windows 보안 센터에 등록된 백신 (productState 둘째 바이트 0x10 = 켜짐, 셋째 바이트 0x00 = 최신)
+    @(Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction SilentlyContinue | ForEach-Object {
+        $st = [int]$_.productState
+        [pscustomobject]@{ Name = $_.displayName; On = (($st -shr 8) -band 0x10) -eq 0x10; UpToDate = (($st -band 0xFF) -eq 0); Path = $_.pathToSignedProductExe }
+    })
+}
+function Test-BroadExclusion([string]$p) {
+    $x = [Environment]::ExpandEnvironmentVariables($p).TrimEnd('\').ToLower()
+    $win = $env:SystemRoot.ToLower()
+    return ($x -match '^[a-z]:$' -or $x -match '^[a-z]:\\users(\\[^\\]+)?$' -or $x -match '\\appdata(\\(local|roaming|locallow))?$' -or
+            $x -match '\\(temp|tmp|downloads|desktop|documents|public)$' -or $x -eq "$win" -or $x -eq "$win\system32" -or $x -match '^[a-z]:\\programdata$' -or $x -match '^[a-z]:\\program files( \(x86\))?$' -or $x -match '\*')
+}
+function Get-ExecInFolder([string]$Path, [int]$Max = 3000) {
+    $out = New-Object System.Collections.ArrayList; $n = 0
+    $root = [Environment]::ExpandEnvironmentVariables($Path)
+    if (-not (Test-Path -LiteralPath $root)) { return @{ Exists = $false; Files = @(); Scanned = 0 } }
+    if (Test-Path -LiteralPath $root -PathType Leaf) { return @{ Exists = $true; Files = @($(if ($ExecExt -contains [IO.Path]::GetExtension($root).ToLower()) { $root })); Scanned = 1 } }
+    $stack = New-Object System.Collections.Stack; $stack.Push(@($root, 0))
+    while ($stack.Count -gt 0 -and $n -lt $Max) {
+        $cur, $depth = $stack.Pop()
+        try {
+            foreach ($f in [IO.Directory]::EnumerateFiles($cur)) { $n++; if ($ExecExt -contains [IO.Path]::GetExtension($f).ToLower()) { [void]$out.Add($f) }; if ($n -ge $Max) { break } }
+            if ($depth -lt 6) { foreach ($d in [IO.Directory]::EnumerateDirectories($cur)) { $stack.Push(@($d, $depth + 1)) } }
+        } catch {}
+    }
+    @{ Exists = $true; Files = @($out); Scanned = $n }
+}
+function Get-DefenderHealth {
+    $rows = New-Object System.Collections.ArrayList
+    $vuln = New-Object System.Collections.ArrayList
+    $av = @(Get-AvProducts)
+    $other = @($av | Where-Object { $_.On -and $_.Name -notmatch 'Windows Defender|Microsoft Defender' })
+    $add = { param($item, $state, $grade, $fix) [void]$rows.Add([pscustomobject][ordered]@{ '항목' = $item; '상태' = $state; '판정' = $grade; '조치' = $fix }); if ($grade -eq '취약') { [void]$vuln.Add($item) } }
+    try {
+        $cs = Get-MpComputerStatus -ErrorAction Stop
+        $mode = "$($cs.AMRunningMode)"
+        if ($other.Count -and $mode -match 'Passive|수동|SxS') {
+            & $add '백신' "다른 백신 사용 중: $(($other | ForEach-Object Name) -join ', ') · Defender는 수동 모드" '정상' '사용 중인 백신이 실시간 보호를 맡습니다'
+        } else {
+            & $add 'Defender 백신' $(if ($cs.AntivirusEnabled) { '켜짐' } else { '꺼짐' }) $(if ($cs.AntivirusEnabled) { '정상' } else { '취약' }) 'Windows 보안 → 바이러스 및 위협 방지 → 켜기'
+            & $add '실시간 보호' $(if ($cs.RealTimeProtectionEnabled) { '켜짐' } else { '꺼짐' }) $(if ($cs.RealTimeProtectionEnabled) { '정상' } else { '취약' }) '검사 결과에서 [선택 항목 제거]로 다시 켤 수 있습니다'
+            & $add '동작 감시' $(if ($cs.BehaviorMonitorEnabled) { '켜짐' } else { '꺼짐' }) $(if ($cs.BehaviorMonitorEnabled) { '정상' } else { '취약' }) '랜섬웨어·스크립트 공격을 행동으로 잡는 기능'
+            & $add '다운로드·첨부 검사' $(if ($cs.IoavProtectionEnabled) { '켜짐' } else { '꺼짐' }) $(if ($cs.IoavProtectionEnabled) { '정상' } else { '취약' }) '내려받은 파일 검사'
+            & $add '변조 방지' $(if ($cs.IsTamperProtected) { '켜짐' } else { '꺼짐' }) $(if ($cs.IsTamperProtected) { '정상' } else { '주의' }) '악성코드가 Defender를 끄지 못하게 함: Windows 보안 → 바이러스 및 위협 방지 설정 → 변조 방지'
+            $age = [int]$cs.AntivirusSignatureAge
+            & $add '보안 인텔리전스(서명)' "$($cs.AntivirusSignatureVersion) · $($age)일 전 업데이트 (Microsoft Security Intelligence)" $(if ($age -le 3) { '정상' } elseif ($age -le 7) { '주의' } else { '취약' }) 'Windows 보안 → 보호 업데이트 → 업데이트 확인'
+            & $add '실행 모드' $mode $(if ($mode -match 'Normal|일반') { '정상' } else { '주의' }) ''
+        }
+    } catch {
+        if ($other.Count) { & $add '백신' "다른 백신 사용 중: $(($other | ForEach-Object Name) -join ', ')" '정상' '' }
+        else { & $add 'Defender 백신' "정보를 읽을 수 없음: $($_.Exception.Message)" '취약' 'Windows 보안 앱에서 바이러스 및 위협 방지를 확인하세요' }
+    }
+    if (-not @($av | Where-Object On).Count) { & $add '켜진 백신' '없음' '취약' 'Windows 보안에서 실시간 보호를 켜세요' }
+    # 예외 설정
+    $exc = New-Object System.Collections.ArrayList
+    try {
+        $mp = Get-MpPreference -ErrorAction Stop
+        foreach ($p in @($mp.ExclusionPath | Where-Object { $_ -and $_ -notmatch '^N/A' })) {
+            $r = Get-ExecInFolder $p
+            $broad = Test-BroadExclusion $p
+            $grade = $(if ($broad) { '위험' } elseif ($r.Files.Count) { '의심' } else { '정상' })
+            [void]$exc.Add([pscustomobject][ordered]@{ '종류' = '폴더'; '예외' = $p; '실행 파일' = $(if (-not $r.Exists) { '폴더 없음' } else { "$($r.Files.Count)개 (확인 $($r.Scanned)개)" }); '예시' = (@($r.Files | Select-Object -First 3) -join ' | '); '판정' = $grade; '_files' = $r.Files; '_broad' = $broad })
+        }
+        foreach ($p in @($mp.ExclusionProcess | Where-Object { $_ -and $_ -notmatch '^N/A' })) {
+            $ex = [Environment]::ExpandEnvironmentVariables($p)
+            $grade = $(if ($p -notmatch '\\' -or $ex -match '(?i)\\(temp|appdata|downloads|users\\public)\\' -or $p -match '\*') { '위험' } else { '의심' })
+            [void]$exc.Add([pscustomobject][ordered]@{ '종류' = '프로세스'; '예외' = $p; '실행 파일' = $(if (Test-Path -LiteralPath $ex) { '있음' } else { '경로 없음' }); '예시' = ''; '판정' = $grade; '_files' = @(); '_broad' = ($grade -eq '위험') })
+        }
+        foreach ($e in @($mp.ExclusionExtension | Where-Object { $_ -and $_ -notmatch '^N/A' })) {
+            $ee = '.' + $e.TrimStart('.').ToLower()
+            $grade = $(if ($ExecExt -contains $ee) { '위험' } else { '정상' })
+            [void]$exc.Add([pscustomobject][ordered]@{ '종류' = '확장자'; '예외' = $e; '실행 파일' = $(if ($grade -eq '위험') { '실행 형식' } else { '' }); '예시' = ''; '판정' = $grade; '_files' = @(); '_broad' = ($grade -eq '위험') })
+        }
+    } catch {}
+    $bad = @($exc | Where-Object { $_.'판정' -eq '위험' })
+    if ($bad.Count) { & $add 'Defender 예외 설정' "위험한 예외 $($bad.Count)개" '취약' '악성코드가 자기를 숨기려고 넓은 예외를 추가하는 경우가 많습니다. 검사 결과에서 제거할 수 있습니다' }
+    elseif ($exc.Count) { & $add 'Defender 예외 설정' "예외 $($exc.Count)개" $(if (@($exc | Where-Object { $_.'판정' -eq '의심' }).Count) { '주의' } else { '정상' }) '예외 폴더 안의 실행 파일은 검사되지 않습니다' }
+    @{ Rows = @($rows); Vulnerable = @($vuln); Exclusions = @($exc); Av = $av }
+}
+function Get-HealthDetail {
+    $h = Get-DefenderHealth
+    $intro = $(if ($h.Vulnerable.Count) { "⚠ 이 PC는 취약합니다: $($h.Vulnerable -join ', '). Windows Defender(또는 사용 중인 백신)가 제대로 켜져 있지 않으면 프록시웨어·랜섬웨어·정보 탈취 악성코드를 막지 못합니다. 아래 조치를 따르거나, 검사 후 [선택 항목 제거]로 고칠 수 있는 항목은 바로 고치세요." }
+              else { 'Windows Defender(또는 사용 중인 백신)가 정상적으로 PC를 보호하고 있습니다. 예외 폴더 안의 파일은 검사되지 않으니 꼭 필요한 예외만 두세요.' })
+    $exc = @($h.Exclusions | Select-Object '종류', '예외', '실행 파일', '예시', '판정')
+    $files = @(foreach ($x in $h.Exclusions) { foreach ($f in @($x._files | Select-Object -First 200)) { [pscustomobject][ordered]@{ '예외' = $x.'예외'; '실행 파일' = $f } } })
+    $av = @($h.Av | ForEach-Object { [pscustomobject][ordered]@{ '백신' = $_.Name; '상태' = $(if ($_.On) { '켜짐' } else { '꺼짐' }); '서명' = $(if ($_.UpToDate) { '최신' } else { '오래됨' }); '경로' = $_.Path } })
+    @{ Intro = $intro; Vulnerable = $h.Vulnerable; Sections = [ordered]@{ '보안 상태' = $h.Rows; "예외 설정 ($($exc.Count))" = $exc; "예외 안 실행 파일 ($($files.Count))" = $files; "설치된 백신 ($($av.Count))" = $av } }
+}
+
+# ---------- 보호 범위·목록·출처 (화면 '무엇을 막나요?') ----------
+function Get-SigSource($sig) {
+    if ($sig.Name -match 'DeskRest|Apprunner') { 'SuperCreative SOC 위협 분석' }
+    elseif ($sig.Name -match 'Softonic') { 'SuperCreative SOC 위협 분석' }
+    else { 'SOC 선정 — 공개 회선 공유(bandwidth sharing) 서비스·SDK' }
+}
+function Get-CoverageDetail {
+    $feat = @(
+        [pscustomobject][ordered]@{ '기능' = '프록시웨어 검사·제거'; '무엇을 막나' = '내 PC 인터넷 회선을 남에게 빌려주는 프로그램(프록시웨어). 모르는 사람이 내 IP로 수천 개 사이트에 접속해 범죄·공격 기록이 내 IP로 남음'; '어떻게' = '설치 폴더·레지스트리·자동 실행·예약 작업·서비스·방화벽 규칙·바로가기·사용 기록·휴지통을 찾아 복원 지점·백업 후 제거'; '한계' = '새 브랜드는 목록 갱신 전까지 이름으로는 못 찾음(SDK 파일로 의심 표시)'; '출처' = 'SuperCreative SOC 위협 분석 · SOC 선정 목록' }
+        [pscustomobject][ordered]@{ '기능' = '위험 사이트 차단'; '무엇을 막나' = '프록시웨어를 끼워 배포한 다운로드 사이트, 보안관제가 확인한 악성 서버(공급망 공격 C2 등)'; '어떻게' = 'Chrome·Edge·Whale·Brave·Firefox 정책으로 도메인과 하위 도메인 접속 차단'; '한계' = '브라우저 밖 프로그램(게임 런처 내장 브라우저 등)의 접속은 막지 못함 → 방탄호스팅 차단·검사로 보완'; '출처' = 'SuperCreative SOC 위협 분석 · schomeguard-db' }
+        [pscustomobject][ordered]@{ '기능' = '방탄호스팅 통신 차단'; '무엇을 막나' = '신고를 무시하고 악성코드·피싱·C2를 숨겨 주는 호스팅(방탄호스팅)과 범죄 조직이 장악한 IP 대역과의 통신(들어오는·나가는)'; '어떻게' = 'Windows 방화벽 차단 규칙 + 매주 목록 갱신, 차단 기록과 차단 프로그램 표시'; '한계' = '대역을 자주 바꾸는 업체는 갱신 전까지 통과할 수 있음'; '출처' = 'SuperCreative SOC 방화벽 목록(SOC_BPH_BLOCK) · Spamhaus DROP' }
+        [pscustomobject][ordered]@{ '기능' = '원치 않는 앱(PUA) 차단'; '무엇을 막나' = '끼워팔기 설치파일, 애드웨어, 번들 다운로더, 브라우저 하이재커 등'; '어떻게' = 'Microsoft Defender PUA 보호 + Edge SmartScreen PUA 차단'; '한계' = '다른 백신을 쓰는 PC에서는 그 백신 설정을 따름'; '출처' = 'Microsoft Defender 문서(PUA protection) · 탐지 DB: Microsoft Security Intelligence' }
+        [pscustomobject][ordered]@{ '기능' = '랜섬웨어 보호'; '무엇을 막나' = '문서·사진을 몰래 암호화하거나 지우는 프로그램(랜섬웨어)'; '어떻게' = '① 제어된 폴더 액세스: 허락 없는 프로그램의 문서·사진·바탕화면 수정 차단 ② 숨긴 미끼 파일이 바뀌면 즉시 경고 + 바꾼 프로그램 기록'; '한계' = '신뢰된 프로그램을 악용하면 폴더 보호를 지나갈 수 있음 → 미끼 경고로 보완. 백업을 대신하지 않음'; '출처' = 'Microsoft Defender 문서(Controlled folder access) · SOC 설계' }
+        [pscustomobject][ordered]@{ '기능' = 'PC 보안 상태 점검'; '무엇을 막나' = 'Windows Defender(백신)가 꺼졌거나 서명이 오래된 상태, 악성코드가 숨으려고 추가한 넓은 예외 설정'; '어떻게' = '실시간 보호·동작 감시·변조 방지·서명 상태와 예외 폴더 안 실행 파일을 확인해 취약하면 경고, 검사에서 다시 켜기·예외 삭제'; '한계' = '회사·학교 정책으로 관리되는 PC는 설정을 바꾸지 못할 수 있음'; '출처' = 'Microsoft Defender 문서 · SOC 설계' }
+        [pscustomobject][ordered]@{ '기능' = '랜섬웨어 흔적 검사'; '무엇을 막나' = '이미 감염된 PC: 랜섬노트(복구 안내문), 문서 뒤에 낯선 확장자가 붙은 암호화 파일'; '어떻게' = '바탕화면·문서·사진·다운로드·OneDrive를 검사해 위험으로 표시(복구에 필요하므로 지우지 않음)'; '한계' = '흔적을 남기지 않는 변종은 못 찾음'; '출처' = 'SOC 설계 · 공개 랜섬웨어 사례(ransomware.live) · MITRE ATT&CK T1486' }
+    )
+    $sigs = @(foreach ($g in $Sigs) { [pscustomobject][ordered]@{ '이름' = $g.Name; '탐지 패턴' = $g.Pat; '설명' = $g.Note; '출처' = (Get-SigSource $g) } })
+    $sigs += [pscustomobject][ordered]@{ '이름' = '프록시 SDK(다른 앱에 끼워진 것)'; '탐지 패턴' = $SdkDll; '설명' = '무료 앱에 회선 공유 SDK가 들어 있는 경우(의심으로 표시)'; '출처' = 'SOC 선정 — 공개 SDK 파일명' }
+    $sites = @(foreach ($x in @(Get-RiskSites)) { [pscustomobject][ordered]@{ '도메인' = $x.Domain; '분류' = $x.Category; '이유' = $x.Reason; '출처' = $x.Source } })
+    $ransom = @(
+        [pscustomobject][ordered]@{ '감시 항목' = '보호 폴더 수정'; '설명' = '문서·사진·바탕화면·음악·동영상 등 Windows 보호 폴더를 허락 없는 프로그램이 수정'; '대응' = '차단 + Windows 보안 알림'; '출처' = 'Microsoft Defender 제어된 폴더 액세스' }
+        [pscustomobject][ordered]@{ '감시 항목' = '알려진 랜섬웨어·악성코드 파일'; '설명' = 'Defender 실시간 보호가 알려진 랜섬웨어(Ransom:…)·악성코드·PUA를 서명과 클라우드 평판으로 차단'; '대응' = 'Defender가 차단·격리, 탐지 내역은 PUA 상세 보기'; '출처' = 'Microsoft Security Intelligence(Defender 탐지 DB)' }
+        [pscustomobject][ordered]@{ '감시 항목' = '미끼 파일 변경·삭제'; '설명' = "폴더마다 숨긴 '$DecoyBase' 파일을 쓰기·삭제"; '대응' = '즉시 화면 경고 + 프로그램 기록(이벤트 4663)'; '출처' = 'SOC 설계' }
+        [pscustomobject][ordered]@{ '감시 항목' = '랜섬노트'; '설명' = 'decrypt, restore files, how to recover 등 이름의 txt·html 파일'; '대응' = '검사에서 위험 표시'; '출처' = '공개 랜섬웨어 사례(ransomware.live 공개 자료) · MITRE ATT&CK T1486' }
+        [pscustomobject][ordered]@{ '감시 항목' = '암호화 확장자'; '설명' = '문서·사진 뒤에 같은 낯선 확장자(.locked, .akira 등)가 붙은 파일 10개 이상'; '대응' = '검사에서 위험 표시(지우지 않음)'; '출처' = '공개 랜섬웨어 사례(ransomware.live 공개 자료) · MITRE ATT&CK T1486' }
+        [pscustomobject][ordered]@{ '감시 항목' = '복구 수단 상태'; '설명' = '섀도 복사본·복원 지점 개수, Defender 랜섬웨어 탐지 이력'; '대응' = '상세 보기에서 대비 상태 표시'; '출처' = 'Windows 기본 기능 · MITRE ATT&CK T1490(복구 무력화)' }
+    )
+    $srcs = @(
+        [pscustomobject][ordered]@{ '출처' = 'SuperCreative 보안관제(SOC) 위협 분석'; '내용' = '공개된 프록시웨어·끼워팔기 다운로드 사이트, NIKKE PC 런처 공급망 공격(insightjs.com) 등 공개 위협 분석'; '링크' = 'https://github.com/supercre/schomeguard-db' }
+        [pscustomobject][ordered]@{ '출처' = 'SuperCreative SOC 방화벽 방탄호스팅 목록'; '내용' = '회사 방화벽 SOC_BPH_BLOCK과 같은 대역'; '링크' = 'https://github.com/supercre/schomeguard-db/blob/main/intel/bph.txt' }
+        [pscustomobject][ordered]@{ '출처' = 'Spamhaus DROP'; '내용' = '범죄 조직이 장악했거나 하이재킹된 IP 대역(매주 원 출처에서 직접 받음)'; '링크' = 'https://www.spamhaus.org/drop/' }
+        [pscustomobject][ordered]@{ '출처' = 'Microsoft Defender — PUA 보호'; '내용' = '원치 않는 앱 차단'; '링크' = 'https://learn.microsoft.com/defender-endpoint/detect-block-potentially-unwanted-apps-microsoft-defender-antivirus' }
+        [pscustomobject][ordered]@{ '출처' = 'Microsoft Defender — 제어된 폴더 액세스'; '내용' = '랜섬웨어로부터 중요 폴더 보호'; '링크' = 'https://learn.microsoft.com/defender-endpoint/controlled-folders' }
+        [pscustomobject][ordered]@{ '출처' = 'Microsoft Security Intelligence'; '내용' = 'Windows Defender의 악성코드·랜섬웨어·PUA 탐지 DB(보안 인텔리전스 서명, 클라우드 보호). 홈가드의 PUA·탐지 내역은 이 DB가 판정한 결과'; '링크' = 'https://www.microsoft.com/wdsi' }
+        [pscustomobject][ordered]@{ '출처' = 'MITRE ATT&CK'; '내용' = '랜섬웨어 행위 기준: T1486 데이터 암호화(Data Encrypted for Impact), T1490 복구 무력화(Inhibit System Recovery)'; '링크' = 'https://attack.mitre.org/techniques/T1486/' }
+        [pscustomobject][ordered]@{ '출처' = 'ransomware.live'; '내용' = '공개된 랜섬웨어 그룹·랜섬노트 자료 — 랜섬노트 이름·암호화 확장자 패턴 참고'; '링크' = 'https://www.ransomware.live/' }
+        [pscustomobject][ordered]@{ '출처' = '공개 분석(GitHub)'; '내용' = 'NIKKE 런처 변조 JS·페이로드 해시와 C2 (MotherSphere gist, whykusanagi/nikke_malware)'; '링크' = 'https://github.com/whykusanagi/nikke_malware' }
+    )
+    $intro = '홈 PC 프로텍터가 막는 위협과 각 목록의 출처입니다. 목록은 보안관제가 확인한 위협을 바탕으로 schomeguard-db 저장소에서 계속 갱신됩니다. Windows Defender를 대신하지 않고, Defender가 놓치기 쉬운 위협(프록시웨어·공급망 공격·방탄호스팅)을 보완합니다.'
+    @{ Intro = $intro; Sections = [ordered]@{ '보호 기능' = $feat; "프록시웨어 ($($sigs.Count))" = $sigs; "위험 사이트 ($($sites.Count))" = $sites; '랜섬웨어 감시' = $ransom; '출처' = $srcs } }
+}
 function Get-ProtectionStatus {
     [ordered]@{
-        Softonic  = Test-SoftonicBlock
+        Sites     = Test-SiteBlock
         Bph       = Test-BphBlock
         Pua       = Test-PuaProtection
+        Ransom    = Test-RansomProtection
+    }
+}
+
+# ---------- 상세 보기 데이터 ----------
+Add-Type -TypeDefinition @'
+using System; using System.Collections.Generic; using System.Net;
+public static class SCIpRanges {
+    static List<uint> s = new List<uint>(), e = new List<uint>(); static List<string> n = new List<string>();
+    static uint U(IPAddress a) { var b = a.GetAddressBytes(); return ((uint)b[0] << 24) | ((uint)b[1] << 16) | ((uint)b[2] << 8) | b[3]; }
+    public static void Clear() { s.Clear(); e.Clear(); n.Clear(); }
+    public static void Add(string cidr) {
+        var p = cidr.Split('/'); IPAddress a; if (!IPAddress.TryParse(p[0], out a) || a.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) return;
+        int len = 32; if (p.Length > 1) { IPAddress m; if (p[1].Contains(".") && IPAddress.TryParse(p[1], out m)) { uint mm = U(m); len = 0; while ((mm & 0x80000000u) != 0) { len++; mm <<= 1; } } else int.TryParse(p[1], out len); }
+        uint mask = len == 0 ? 0u : 0xFFFFFFFFu << (32 - len); uint st = U(a) & mask;
+        s.Add(st); e.Add(st | ~mask); n.Add(IPAddress.Parse(((st >> 24) & 255) + "." + ((st >> 16) & 255) + "." + ((st >> 8) & 255) + "." + (st & 255)) + "/" + len);
+    }
+    public static string Match(string ip) { IPAddress a; if (!IPAddress.TryParse(ip, out a) || a.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) return null; uint u = U(a); for (int i = 0; i < s.Count; i++) if (u >= s[i] && u <= e[i]) return n[i]; return null; }
+    public static string Normalize(string cidr) { Clear(); Add(cidr); return n.Count > 0 ? n[0] : cidr; }
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)] static extern uint QueryDosDevice(string d, System.Text.StringBuilder t, int m);
+    static Dictionary<string, string> dev;
+    public static string DosPath(string p) {
+        if (string.IsNullOrEmpty(p) || !p.StartsWith("\\device\\", StringComparison.OrdinalIgnoreCase)) return p;
+        if (dev == null) { dev = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); foreach (var d in Environment.GetLogicalDrives()) { var l = d.TrimEnd('\\'); var sb = new System.Text.StringBuilder(260); if (QueryDosDevice(l, sb, 260) > 0) dev[sb.ToString()] = l; } }
+        foreach (var kv in dev) if (p.StartsWith(kv.Key + "\\", StringComparison.OrdinalIgnoreCase)) return kv.Value + p.Substring(kv.Key.Length);
+        return p;
+    }
+}
+'@ -ErrorAction SilentlyContinue
+
+function Get-SiteDetail {
+    $pol = @{}
+    foreach ($b in $BrowserPolicy.Keys) {
+        $k = $BrowserPolicy[$b]
+        $pol[$b] = if (Test-Path $k) { $it = Get-Item -LiteralPath $k; @($it.GetValueNames() | ForEach-Object { "$($it.GetValue($_))" }) } else { @() }
+    }
+    $ff = if (Test-Path $FirefoxBlockKey) { $it = Get-Item -LiteralPath $FirefoxBlockKey; @($it.GetValueNames() | ForEach-Object { "$($it.GetValue($_))" }) } else { @() }
+    foreach ($site in @(Get-RiskSites)) {
+        $dm = $site.Domain
+        $row = [ordered]@{ '도메인' = $dm; '분류' = $site.Category; '이유' = $site.Reason; '출처' = $site.Source }
+        foreach ($b in $BrowserPolicy.Keys) { $row[$b] = $(if ($pol[$b] -contains $dm) { '차단' } else { '—' }) }
+        $row['Firefox'] = $(if ($ff -contains "*://$dm/*") { '차단' } else { '—' })
+        [pscustomobject]$row
+    }
+}
+
+function Get-BphDetail([int]$MaxRows = 500) {
+    $soc = New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach ($c in @(Get-SocBph)) { [void]$soc.Add([SCIpRanges]::Normalize($c)) }
+    [SCIpRanges]::Clear()
+    $ranges = New-Object System.Collections.ArrayList
+    foreach ($r in @(Get-NetFirewallRule -Group 'SCHomeGuard-BPH' -ErrorAction SilentlyContinue | Where-Object Direction -eq 'Outbound')) {
+        foreach ($a in @(($r | Get-NetFirewallAddressFilter).RemoteAddress)) {
+            $n = [SCIpRanges]::Normalize($a); [void]$ranges.Add([pscustomobject][ordered]@{ '대역' = $n; '출처' = $(if ($soc.Contains($n)) { 'SOC 방탄호스팅' } else { 'Spamhaus DROP' }) })
+        }
+    }
+    [SCIpRanges]::Clear(); foreach ($x in $ranges) { [SCIpRanges]::Add($x.'대역') }
+    $src = @{}; foreach ($x in $ranges) { $src[$x.'대역'] = $x.'출처' }
+    # 방화벽 차단 기록(pfirewall.log)에서 방탄호스팅 대역과의 차단만 고른다
+    $hits = New-Object System.Collections.ArrayList
+    $logs = @(Get-NetFirewallProfile | ForEach-Object { [Environment]::ExpandEnvironmentVariables($_.LogFileName) } | Sort-Object -Unique)
+    $logOn = @(Get-NetFirewallProfile | Where-Object { "$($_.LogBlocked)" -eq 'True' }).Count -gt 0
+    foreach ($lf in $logs) {
+        foreach ($f in @($lf, "$lf.old")) {
+            if (-not (Test-Path $f)) { continue }
+            try {
+                $fs = New-Object IO.FileStream($f, 'Open', 'Read', 'ReadWrite'); $sr = New-Object IO.StreamReader($fs)
+                $idx = @{}
+                while ($null -ne ($line = $sr.ReadLine())) {
+                    if ($line.StartsWith('#Fields:')) { $i = 0; foreach ($h in ($line.Substring(8).Trim() -split ' ')) { $idx[$h] = $i; $i++ }; continue }
+                    if ($line.StartsWith('#') -or -not $line.Contains('DROP')) { continue }
+                    $c = $line -split ' '
+                    if ($c[$idx['action']] -ne 'DROP') { continue }
+                    $out = ($c[$idx['path']] -eq 'SEND')
+                    $rip = $(if ($out) { $c[$idx['dst-ip']] } else { $c[$idx['src-ip']] })
+                    $m = [SCIpRanges]::Match($rip)
+                    if (-not $m) { continue }
+                    [void]$hits.Add([pscustomobject][ordered]@{
+                        '시각' = "$($c[$idx['date']]) $($c[$idx['time']])"; '방향' = $(if ($out) { '↗ OUT' } else { '↙ IN' })
+                        '원격 IP' = $rip; '원격 포트' = $(if ($out) { $c[$idx['dst-port']] } else { $c[$idx['src-port']] }); '프로토콜' = $c[$idx['protocol']]
+                        '차단 대역' = $m; '출처' = $src[$m]; 'PID' = $(if ($idx.ContainsKey('pid')) { $c[$idx['pid']] } else { '' }); '차단 프로그램' = ''
+                    })
+                }
+                $sr.Close()
+            } catch { Write-Log "방화벽 기록 읽기 실패($f): $($_.Exception.Message)" 'WARN' }
+        }
+    }
+    $hits = @($hits | Sort-Object '시각' -Descending | Select-Object -First $MaxRows)
+    # PID → 프로그램 (지금 실행 중인 프로세스 기준. 이미 끝났으면 '(종료됨)', PID는 재사용될 수 있음)
+    $pn = @{}
+    foreach ($h in $hits) {
+        if (-not $h.PID) { continue }
+        if (-not $pn.ContainsKey($h.PID)) { $pr = Get-Process -Id ([int]$h.PID) -ErrorAction SilentlyContinue; $pn[$h.PID] = $(if ($pr) { "$($pr.ProcessName).exe" + $(if ($pr.Path) { " ($($pr.Path))" } else { '' }) } else { '(종료됨)' }) }
+        $h.'차단 프로그램' = $pn[$h.PID]
+    }
+    # Windows 감사 5157(필터링 플랫폼이 차단한 연결)에는 차단 순간의 프로그램 경로가 있다 → 같은 연결이면 그 값으로 채운다
+    try {
+        $ev = @(Get-WinEvent -FilterHashtable @{ LogName = 'Security'; Id = 5157; StartTime = (Get-Date).AddDays(-14) } -MaxEvents 20000 -ErrorAction Stop)
+        $wfp = @{}
+        foreach ($e in $ev) {
+            $p = $e.Properties
+            $a = "$($p[3].Value)"; $b = "$($p[5].Value)"
+            $remote = $(if ([SCIpRanges]::Match($b)) { $b } elseif ([SCIpRanges]::Match($a)) { $a } else { $null })
+            if (-not $remote) { continue }
+            $key = '{0:yyyy-MM-dd HH:mm:ss}|{1}' -f $e.TimeCreated, $remote
+            if (-not $wfp.ContainsKey($key)) { $wfp[$key] = [SCIpRanges]::DosPath("$($p[1].Value)") }
+            $hasLog = @($hits | Where-Object { $_.'시각' -eq $e.TimeCreated.ToString('yyyy-MM-dd HH:mm:ss') -and $_.'원격 IP' -eq $remote }).Count
+            if (-not $hasLog) {
+                $out = ("$($p[2].Value)" -match '14593')
+                $m = [SCIpRanges]::Match($remote)
+                $hits += [pscustomobject][ordered]@{ '시각' = $e.TimeCreated.ToString('yyyy-MM-dd HH:mm:ss'); '방향' = $(if ($out) { '↗ OUT' } else { '↙ IN' }); '원격 IP' = $remote
+                    '원격 포트' = $(if ($remote -eq $b) { "$($p[6].Value)" } else { "$($p[4].Value)" }); '프로토콜' = $(switch ("$($p[7].Value)") { '6' { 'TCP' } '17' { 'UDP' } '1' { 'ICMP' } default { "$_" } })
+                    '차단 대역' = $m; '출처' = $src[$m]; 'PID' = "$($p[0].Value)"; '차단 프로그램' = $wfp[$key] }
+            }
+        }
+        foreach ($h in $hits) { $k2 = "$($h.'시각')|$($h.'원격 IP')"; if ($wfp.ContainsKey($k2) -and $wfp[$k2]) { $h.'차단 프로그램' = $wfp[$k2] } }
+        $hits = @($hits | Sort-Object '시각' -Descending | Select-Object -First $MaxRows)
+    } catch {}
+    $st = Get-State
+    $intro = if (-not (Test-BphBlock)) { '방탄호스팅 통신 차단이 꺼져 있습니다. 켜면 방화벽이 아래 대역과의 통신을 막고, 차단된 접속을 기록합니다.' }
+             else { "차단 대역 $($ranges.Count)개(갱신 $($st.BphUpdated)). 차단된 접속 $($hits.Count)건" + $(if (-not $logOn) { ' — 방화벽 차단 기록이 꺼져 있어 기록을 볼 수 없습니다(회사 정책 PC일 수 있음).' } else { '. 방화벽 기록에는 프로그램 이름이 없어 PID만 표시합니다.' }) }
+    @{ Intro = $intro; Sections = [ordered]@{ "차단된 접속 ($($hits.Count))" = $hits; "차단 대역 ($($ranges.Count))" = @($ranges) } }
+}
+
+function Get-PuaDetail {
+    $sev = @{ 0 = '알 수 없음'; 1 = '낮음'; 2 = '보통'; 4 = '높음'; 5 = '심각' }
+    $act = @{ 0 = '알 수 없음'; 1 = '탐지됨'; 2 = '치료됨'; 3 = '격리됨'; 4 = '제거됨'; 5 = '허용됨'; 6 = '차단됨'; 102 = '격리 실패'; 103 = '제거 실패'; 104 = '허용 실패'; 105 = '중단됨'; 107 = '차단 실패' }
+    try {
+        $mp = Get-MpPreference -ErrorAction Stop; $cs = Get-MpComputerStatus -ErrorAction Stop
+        $threats = @{}; foreach ($t in @(Get-MpThreat -ErrorAction SilentlyContinue)) { $threats["$($t.ThreatID)"] = $t }
+        $rows = foreach ($d in @(Get-MpThreatDetection -ErrorAction Stop | Sort-Object InitialDetectionTime -Descending)) {
+            $t = $threats["$($d.ThreatID)"]; $name = "$($t.ThreatName)"
+            [pscustomobject][ordered]@{
+                '시각' = "$($d.InitialDetectionTime)"; '이름' = $name
+                '종류' = $(if ($name -match '^PUA') { '원치 않는 앱(PUA)' } elseif ($name -match '^HackTool') { '해킹 도구' } elseif ($name) { '악성코드' } else { '' })
+                '위험도' = $sev[[int]$t.SeverityID]; '조치' = $act[[int]$d.ThreatStatusID]; '성공' = $(if ($d.ActionSuccess) { '예' } else { '아니요' })
+                '대상' = (@($d.Resources) | ForEach-Object { $_ -replace '^(file|process|regkey|webfile|containerfile):_', '' }) -join ' | '
+            }
+        }
+        $pua = @{ 0 = '꺼짐'; 1 = '차단'; 2 = '감사(기록만)' }[[int]$mp.PUAProtection]
+        $edge = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Edge' -Name SmartScreenPuaEnabled -ErrorAction SilentlyContinue).SmartScreenPuaEnabled
+        $intro = "탐지 DB: Microsoft Security Intelligence $($cs.AntivirusSignatureVersion) ($($cs.AntivirusSignatureLastUpdated.ToString('yyyy-MM-dd')) 업데이트). Defender PUA 차단: $pua · Edge 원치 않는 앱 차단: $(if ($edge -eq 1) { '켜짐' } else { '기본값' }) · 실시간 보호: $(if ($cs.RealTimeProtectionEnabled) { '켜짐' } else { '꺼짐' }). Defender가 기록한 탐지 $(@($rows).Count)건(PUA $(@($rows | Where-Object { $_.'종류' -like '*PUA*' }).Count)건)."
+        @{ Intro = $intro; Sections = [ordered]@{ "탐지 내역 ($(@($rows).Count))" = @($rows) } }
+    } catch {
+        @{ Intro = "Windows Defender 정보를 읽지 못했습니다(다른 백신을 쓰는 PC일 수 있음): $($_.Exception.Message)"; Sections = [ordered]@{ '탐지 내역' = @() } }
     }
 }
 
@@ -867,10 +1539,19 @@ if ($Cli) {
     switch ($Action) {
         'Scan' { $r = Invoke-Scan; $r | Sort-Object Order | Format-Table Severity, Product, Kind, Target -AutoSize -Wrap | Out-String -Width 220 | Write-Host; if (@($r | Where-Object Severity -eq '위험').Count) { exit 2 } }
         'Clean' { $r = Invoke-Scan; Invoke-Clean @($r | Where-Object { $_.Severity -eq '위험' -or $IncludeSuspicious }) $true; [void](Invoke-Scan) }
-        'Protect' { Install-Self; Set-SoftonicBlock $true; Set-BphBlock $true; Set-PuaProtection $true }
-        'Unprotect' { Set-SoftonicBlock $false; Set-BphBlock $false; Set-PuaProtection $false }
+        'Protect' { Install-Self; Set-SiteBlock $true; Set-BphBlock $true; Set-PuaProtection $true; Set-RansomProtection $true }
+        'Unprotect' { Set-SiteBlock $false; Set-BphBlock $false; Set-PuaProtection $false; Set-RansomProtection $false }
+        'DecoyAlert' { Invoke-DecoyAlert }
+        'Update' { Install-Self; [void](Invoke-AutoUpdate) }
         'UpdateBPH' { if (Test-BphBlock) { Set-BphBlock $true } else { Write-Log '방탄호스팅 차단이 꺼져 있어 갱신하지 않습니다.' } }
         'Status' { Get-ProtectionStatus | Format-Table -AutoSize | Out-String | Write-Host }
+        'Detail' {
+            Write-Host '[위험 사이트 차단]'; Get-SiteDetail | Format-Table -AutoSize | Out-String -Width 220 | Write-Host
+            foreach ($d in @(Get-HealthDetail), @(Get-CoverageDetail), @(Get-BphDetail 50), @(Get-PuaDetail), @(Get-RansomDetail)) {
+                Write-Host $d.Intro
+                foreach ($k in $d.Sections.Keys) { Write-Host "[$k]"; @($d.Sections[$k]) | Select-Object -First 20 | Format-Table -AutoSize | Out-String -Width 220 | Write-Host }
+            }
+        }
     }
     exit 0
 }
@@ -887,7 +1568,7 @@ try {
 [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="SuperCreative 홈 PC 보안 점검" Width="1180" Height="780" MinWidth="980" MinHeight="640"
+        Title="슈크인 홈 PC 프로텍터 (SCHomeGuard)" Width="1180" Height="780" MinWidth="980" MinHeight="640"
         WindowStartupLocation="CenterScreen" Background="#F3F5FA" FontFamily="Malgun Gothic, Segoe UI" FontSize="13">
   <Window.Resources>
     <Style x:Key="Btn" TargetType="Button">
@@ -915,12 +1596,46 @@ try {
       <Setter Property="Background" Value="White"/><Setter Property="CornerRadius" Value="12"/><Setter Property="Padding" Value="16"/>
       <Setter Property="Margin" Value="0,0,0,12"/><Setter Property="BorderBrush" Value="#E4E8F2"/><Setter Property="BorderThickness" Value="1"/>
     </Style>
+    <Style x:Key="Switch" TargetType="ToggleButton">
+      <Setter Property="Cursor" Value="Hand"/><Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ToggleButton">
+            <Grid Background="Transparent">
+              <Border x:Name="track" Width="46" Height="26" CornerRadius="13" Background="#D0D5DD"/>
+              <Ellipse x:Name="thumb" Width="20" Height="20" Fill="White" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="3,0,0,0">
+                <Ellipse.Effect><DropShadowEffect BlurRadius="4" ShadowDepth="1" Opacity="0.25"/></Ellipse.Effect>
+              </Ellipse>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsChecked" Value="True"><Setter TargetName="track" Property="Background" Value="#16A34A"/><Setter TargetName="thumb" Property="Margin" Value="23,0,0,0"/></Trigger>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="track" Property="Opacity" Value="0.88"/></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="track" Property="Opacity" Value="0.45"/><Setter TargetName="thumb" Property="Opacity" Value="0.7"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="Link" TargetType="Button">
+      <Setter Property="Foreground" Value="#3B5BDB"/><Setter Property="Cursor" Value="Hand"/><Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <TextBlock x:Name="t" Text="{TemplateBinding Content}" Foreground="{TemplateBinding Foreground}"/>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="t" Property="TextDecorations" Value="Underline"/></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="t" Property="Opacity" Value="0.4"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
     <Style x:Key="Pill" TargetType="Border">
       <Setter Property="CornerRadius" Value="10"/><Setter Property="Padding" Value="10,2"/><Setter Property="HorizontalAlignment" Value="Right"/><Setter Property="VerticalAlignment" Value="Top"/>
     </Style>
   </Window.Resources>
   <Grid>
-    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
 
     <!-- 머리말 -->
     <Border Grid.Row="0" Padding="24,18">
@@ -937,15 +1652,23 @@ try {
             <TextBlock Text="&#x1F6E1;" FontFamily="Segoe UI Emoji" FontSize="28" HorizontalAlignment="Center" VerticalAlignment="Center"/>
           </Border>
           <StackPanel VerticalAlignment="Center">
-            <TextBlock Text="홈 PC 보안 점검" Foreground="White" FontSize="22" FontWeight="Bold"/>
-            <TextBlock Text="프록시웨어 검사·제거  ·  Softonic 차단  ·  방탄호스팅 차단  ·  원치 않는 앱 차단" Foreground="#DDE4FF" Margin="0,4,0,0"/>
+            <TextBlock Text="슈크인 홈 PC 프로텍터" Foreground="White" FontSize="22" FontWeight="Bold"/>
+            <TextBlock Text="개인 집 PC 전용  ·  프록시웨어 검사·제거  ·  위험 사이트·방탄호스팅·원치 않는 앱 차단 · 랜섬웨어 보호" Foreground="#DDE4FF" Margin="0,4,0,0"/>
           </StackPanel>
         </StackPanel>
       </DockPanel>
     </Border>
 
     <!-- 본문 -->
-    <Grid Grid.Row="1" Margin="20,16,20,0">
+    <!-- 취약 경고 띠 -->
+    <Border x:Name="Banner" Grid.Row="1" Visibility="Collapsed" Background="#FEE4E2" BorderBrush="#FDA29B" BorderThickness="0,0,0,1" Padding="24,10">
+      <DockPanel>
+        <Button x:Name="BtnHealthBanner" DockPanel.Dock="Right" Style="{StaticResource Btn}" Background="#D92D20" Content="자세히 보기" Margin="0"/>
+        <TextBlock x:Name="TxtBanner" Foreground="#912018" FontWeight="SemiBold" VerticalAlignment="Center" TextWrapping="Wrap"/>
+      </DockPanel>
+    </Border>
+
+    <Grid Grid.Row="2" Margin="20,16,20,0">
       <Grid.ColumnDefinitions><ColumnDefinition Width="360"/><ColumnDefinition Width="16"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
 
       <!-- 왼쪽: 보호 설정 -->
@@ -955,31 +1678,65 @@ try {
             <Button x:Name="BtnProtectAll" DockPanel.Dock="Right" Style="{StaticResource Btn}" Content="모두 켜기" Margin="0"/>
             <TextBlock Text="보호 설정" FontSize="16" FontWeight="Bold" Foreground="#1F2937" VerticalAlignment="Center"/>
           </DockPanel>
+          <Button x:Name="BtnHealth" Style="{StaticResource Link}" HorizontalAlignment="Left" Margin="2,0,0,6" Content="PC 보안 상태(Defender·예외 폴더) 보기 ›"/>
+          <Button x:Name="BtnCoverage" Style="{StaticResource Link}" HorizontalAlignment="Left" Margin="2,0,0,12" Content="무엇을 막나요? 보호 범위·목록·출처 보기 ›"/>
 
           <Border Style="{StaticResource Card}">
             <StackPanel>
-              <Grid><TextBlock Text="Softonic 차단" FontWeight="Bold" FontSize="14" Foreground="#111827"/>
-                <Border x:Name="PillSoftonic" Style="{StaticResource Pill}" Background="#EEF0F4"><TextBlock x:Name="StSoftonic" Text="확인 중" FontSize="11"/></Border></Grid>
-              <TextBlock TextWrapping="Wrap" Foreground="#667085" Margin="0,6,0,10" Text="무료 프로그램 다운로드 사이트 Softonic이 스폰서 설치파일로 프록시웨어를 끼워 배포했습니다. Chrome·Edge·Whale·Brave·Firefox에서 도메인 이름으로 접속을 막아, 같은 서버를 쓰는 다른 사이트에는 영향이 없습니다."/>
-              <StackPanel Orientation="Horizontal"><Button x:Name="BtnSoftonicOn" Style="{StaticResource Btn}" Content="켜기"/><Button x:Name="BtnSoftonicOff" Style="{StaticResource Ghost}" Content="끄기"/></StackPanel>
+              <DockPanel>
+                <ToggleButton x:Name="TglSites" DockPanel.Dock="Right" Style="{StaticResource Switch}"/>
+                <TextBlock x:Name="StSites" DockPanel.Dock="Right" Text="확인 중" FontSize="12" Foreground="#667085" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <TextBlock Text="위험 사이트 차단" FontWeight="Bold" FontSize="14" Foreground="#111827" VerticalAlignment="Center"/>
+              </DockPanel>
+              <TextBlock TextWrapping="Wrap" Foreground="#667085" Margin="0,8,0,10" Text="프록시웨어를 끼워 배포한 다운로드 사이트(Softonic 등)와 보안관제가 확인한 악성 서버 도메인을 Chrome·Edge·Whale·Brave·Firefox에서 막습니다. 도메인 이름 기준이라 같은 서버를 쓰는 다른 사이트에는 영향이 없고, 목록은 보안관제가 계속 갱신합니다."/>
+              <DockPanel>
+                <Button x:Name="BtnSitesDetail" DockPanel.Dock="Right" Style="{StaticResource Link}" Content="차단 사이트 보기 ›"/>
+                <TextBlock x:Name="SubSites" Foreground="#98A2B3" FontSize="11" VerticalAlignment="Center"/>
+              </DockPanel>
             </StackPanel>
           </Border>
 
           <Border Style="{StaticResource Card}">
             <StackPanel>
-              <Grid><TextBlock Text="방탄호스팅 통신 차단" FontWeight="Bold" FontSize="14" Foreground="#111827"/>
-                <Border x:Name="PillBph" Style="{StaticResource Pill}" Background="#EEF0F4"><TextBlock x:Name="StBph" Text="확인 중" FontSize="11"/></Border></Grid>
-              <TextBlock TextWrapping="Wrap" Foreground="#667085" Margin="0,6,0,10" Text="공격·악성코드에 쓰이는 방탄호스팅과 Spamhaus DROP 대역(약 1,800개)을 Windows 방화벽에서 들어오고 나가는 양방향으로 막습니다. 매주 월요일 자동으로 최신 목록을 받습니다."/>
-              <StackPanel Orientation="Horizontal"><Button x:Name="BtnBphOn" Style="{StaticResource Btn}" Content="켜기"/><Button x:Name="BtnBphOff" Style="{StaticResource Ghost}" Content="끄기"/></StackPanel>
+              <DockPanel>
+                <ToggleButton x:Name="TglBph" DockPanel.Dock="Right" Style="{StaticResource Switch}"/>
+                <TextBlock x:Name="StBph" DockPanel.Dock="Right" Text="확인 중" FontSize="12" Foreground="#667085" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <TextBlock Text="방탄호스팅 통신 차단" FontWeight="Bold" FontSize="14" Foreground="#111827" VerticalAlignment="Center"/>
+              </DockPanel>
+              <TextBlock TextWrapping="Wrap" Foreground="#667085" Margin="0,8,0,10" Text="공격·악성코드에 쓰이는 방탄호스팅과 Spamhaus DROP 대역(약 1,800개)을 Windows 방화벽에서 들어오고 나가는 양방향으로 막습니다. 매주 월요일 자동으로 최신 목록을 받습니다."/>
+              <DockPanel>
+                <Button x:Name="BtnBphDetail" DockPanel.Dock="Right" Style="{StaticResource Link}" Content="차단 기록·대역 보기 ›"/>
+                <TextBlock x:Name="SubBph" Foreground="#98A2B3" FontSize="11" VerticalAlignment="Center"/>
+              </DockPanel>
             </StackPanel>
           </Border>
 
           <Border Style="{StaticResource Card}">
             <StackPanel>
-              <Grid><TextBlock Text="원치 않는 앱(PUA) 차단" FontWeight="Bold" FontSize="14" Foreground="#111827"/>
-                <Border x:Name="PillPua" Style="{StaticResource Pill}" Background="#EEF0F4"><TextBlock x:Name="StPua" Text="확인 중" FontSize="11"/></Border></Grid>
-              <TextBlock TextWrapping="Wrap" Foreground="#667085" Margin="0,6,0,10" Text="Windows Defender와 Edge가 끼워팔기 설치파일·애드웨어를 내려받거나 실행할 때 막도록 켭니다. 다른 백신을 쓰는 PC에서는 적용되지 않을 수 있습니다."/>
-              <StackPanel Orientation="Horizontal"><Button x:Name="BtnPuaOn" Style="{StaticResource Btn}" Content="켜기"/><Button x:Name="BtnPuaOff" Style="{StaticResource Ghost}" Content="끄기"/></StackPanel>
+              <DockPanel>
+                <ToggleButton x:Name="TglPua" DockPanel.Dock="Right" Style="{StaticResource Switch}"/>
+                <TextBlock x:Name="StPua" DockPanel.Dock="Right" Text="확인 중" FontSize="12" Foreground="#667085" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <TextBlock Text="원치 않는 앱(PUA) 차단" FontWeight="Bold" FontSize="14" Foreground="#111827" VerticalAlignment="Center"/>
+              </DockPanel>
+              <TextBlock TextWrapping="Wrap" Foreground="#667085" Margin="0,8,0,10" Text="Windows Defender와 Edge가 끼워팔기 설치파일·애드웨어를 내려받거나 실행할 때 막도록 켭니다. 다른 백신을 쓰는 PC에서는 적용되지 않을 수 있습니다."/>
+              <DockPanel>
+                <Button x:Name="BtnPuaDetail" DockPanel.Dock="Right" Style="{StaticResource Link}" Content="탐지 내역 보기 ›"/>
+                <TextBlock x:Name="SubPua" Foreground="#98A2B3" FontSize="11" VerticalAlignment="Center"/>
+              </DockPanel>
+            </StackPanel>
+          </Border>
+          <Border Style="{StaticResource Card}">
+            <StackPanel>
+              <DockPanel>
+                <ToggleButton x:Name="TglRansom" DockPanel.Dock="Right" Style="{StaticResource Switch}"/>
+                <TextBlock x:Name="StRansom" DockPanel.Dock="Right" Text="확인 중" FontSize="12" Foreground="#667085" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <TextBlock Text="랜섬웨어 보호" FontWeight="Bold" FontSize="14" Foreground="#111827" VerticalAlignment="Center"/>
+              </DockPanel>
+              <TextBlock TextWrapping="Wrap" Foreground="#667085" Margin="0,8,0,10" Text="Windows 보안의 '제어된 폴더 액세스'로 허락 없는 프로그램이 문서·사진·바탕화면을 바꾸지 못하게 막고, 폴더마다 숨긴 미끼 파일을 두어 누가 건드리면 바로 경고합니다. 게임 저장 등이 막히면 Windows 보안 알림에서 허용하세요."/>
+              <DockPanel>
+                <Button x:Name="BtnRansomDetail" DockPanel.Dock="Right" Style="{StaticResource Link}" Content="보호 상태·경고 보기 ›"/>
+                <TextBlock x:Name="SubRansom" Foreground="#98A2B3" FontSize="11" VerticalAlignment="Center"/>
+              </DockPanel>
             </StackPanel>
           </Border>
         </StackPanel>
@@ -1041,9 +1798,10 @@ try {
     </Grid>
 
     <!-- 바닥글 -->
-    <Border Grid.Row="2" Background="White" BorderBrush="#E4E8F2" BorderThickness="0,1,0,0" Padding="20,8">
+    <Border Grid.Row="3" Background="White" BorderBrush="#E4E8F2" BorderThickness="0,1,0,0" Padding="20,8">
       <DockPanel>
         <Button x:Name="BtnFolder" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="기록·백업 폴더 열기" Margin="0" Padding="12,5"/>
+        <Button x:Name="BtnUpdate" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="업데이트 확인" Margin="0,0,8,0" Padding="12,5"/>
         <ProgressBar x:Name="Busy" DockPanel.Dock="Right" Width="160" Height="6" Margin="0,0,14,0" IsIndeterminate="True" Visibility="Hidden" Foreground="#3B5BDB" Background="#E4E8F2" BorderThickness="0"/>
         <TextBlock x:Name="TxtFooter" Foreground="#667085" VerticalAlignment="Center" Text="SuperCreative 보안관제(SOC) · 기록·백업: C:\ProgramData\SCHomeGuard"/>
       </DockPanel>
@@ -1052,29 +1810,53 @@ try {
 </Window>
 '@
 
-$script:Window = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
+function Stop-GuiWithError($err) {
+    # 실행기는 PowerShell을 숨김 창으로 띄우므로, 화면을 못 열면 사용자에게 아무것도 안 보인다 → 오류 창 + 로그
+    $msg = "화면을 열지 못했습니다.`n`n$($err.Exception.Message)`n`n명령줄 검사: SCHomeGuard.exe -Cli -Action Scan`n기록: $DataDir\gui_error.log"
+    try { Add-Content -Path (Join-Path $DataDir 'gui_error.log') -Value ("{0}  {1}`n{2}" -f (Get-Date -Format s), $err.Exception.Message, $err.ScriptStackTrace) -Encoding UTF8 } catch {}
+    try { [System.Windows.Forms.MessageBox]::Show($msg, $AppTitle, 'OK', 'Error') | Out-Null } catch {}
+    exit 1
+}
+try { $script:Window = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml)) } catch { Stop-GuiWithError $_ }
 $ui = @{}
-foreach ($n in 'TxtVersion', 'BtnProtectAll', 'PillSoftonic', 'StSoftonic', 'BtnSoftonicOn', 'BtnSoftonicOff', 'PillBph', 'StBph', 'BtnBphOn', 'BtnBphOff',
-    'PillPua', 'StPua', 'BtnPuaOn', 'BtnPuaOff', 'BtnScan', 'ChkSusp', 'SummaryBox', 'TxtSummary',
-    'Grid', 'BtnClean', 'ChkRestore', 'BtnReport', 'TxtLog', 'BtnFolder', 'Busy') { $ui[$n] = $script:Window.FindName($n) }
+foreach ($n in 'TxtVersion', 'BtnProtectAll', 'BtnCoverage', 'BtnHealth', 'Banner', 'TxtBanner', 'BtnHealthBanner', 'TglSites', 'StSites', 'SubSites', 'BtnSitesDetail', 'TglBph', 'StBph', 'SubBph', 'BtnBphDetail',
+    'TglPua', 'StPua', 'SubPua', 'BtnPuaDetail', 'TglRansom', 'StRansom', 'SubRansom', 'BtnRansomDetail', 'BtnScan', 'ChkSusp', 'SummaryBox', 'TxtSummary',
+    'Grid', 'BtnClean', 'ChkRestore', 'BtnReport', 'TxtLog', 'BtnFolder', 'BtnUpdate', 'TxtFooter', 'Busy') { $ui[$n] = $script:Window.FindName($n) }
 $script:UiLog = $ui.TxtLog
 $ui.TxtVersion.Text = "버전 $Version"
 $script:Rows = New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
 $ui.Grid.ItemsSource = $script:Rows
 $bc = New-Object System.Windows.Media.BrushConverter
 
-function Set-Pill($Pill, $Text, [bool]$On) {
-    $Pill.Background = $bc.ConvertFromString($(if ($On) { '#DCFCE7' } else { '#F2F4F7' }))
+function Set-Toggle($Tgl, $Text, [bool]$On) {
+    $Tgl.IsChecked = $On   # 코드로 바꾸면 Click 이벤트는 생기지 않는다
     $Text.Foreground = $bc.ConvertFromString($(if ($On) { '#15803D' } else { '#667085' }))
-    $Text.Text = $(if ($On) { '● 켜짐' } else { '○ 꺼짐' })
+    $Text.Text = $(if ($On) { '켜짐' } else { '꺼짐' })
+}
+function Update-Footer {
+    $st = Get-State
+    $ui.TxtFooter.Text = "슈크인의 홈 PC 프로텍터 · 보안관제(SOC) · 위협 목록 $(if ($st.DbVersion) { $st.DbVersion } else { '내장' }) · 마지막 업데이트 확인 $(if ($st.LastUpdateCheck) { $st.LastUpdateCheck } else { '없음' }) · 기록·백업: $DataDir"
+}
+function Update-Banner {
+    $h = Get-DefenderHealth
+    if ($h.Vulnerable.Count) {
+        $ui.TxtBanner.Text = "⚠ 이 PC는 취약합니다 — $($h.Vulnerable -join ', '). 백신이 제대로 켜져 있지 않으면 악성코드를 막지 못합니다."
+        $ui.Banner.Visibility = 'Visible'
+    } else { $ui.Banner.Visibility = 'Collapsed' }
 }
 function Update-Status {
     $s = Get-ProtectionStatus
-    Set-Pill $ui.PillSoftonic $ui.StSoftonic $s.Softonic
-    Set-Pill $ui.PillBph $ui.StBph $s.Bph
-    Set-Pill $ui.PillPua $ui.StPua $s.Pua
+    Set-Toggle $ui.TglSites $ui.StSites $s.Sites
+    Set-Toggle $ui.TglBph $ui.StBph $s.Bph
+    Set-Toggle $ui.TglPua $ui.StPua $s.Pua
+    Set-Toggle $ui.TglRansom $ui.StRansom $s.Ransom
+    $st = Get-State
+    $rs = @(Get-RiskSites); $ui.SubSites.Text = "차단 도메인 $($rs.Count)개 ($(@($rs | ForEach-Object { $_.Category } | Sort-Object -Unique) -join ', '))"
+    $ui.SubBph.Text = $(if ($s.Bph -and $st.BphCount) { "대역 $($st.BphCount)개 · 갱신 $($st.BphUpdated)" } else { '' })
+    $ui.SubRansom.Text = $(if ($s.Ransom) { "미끼 파일 $(@($st.Decoys).Count)개 감시 · 경고 $(if (Test-Path $AlertFile) { @(Get-Content $AlertFile | Where-Object { $_ }).Count } else { 0 })건" } else { '' })
+    $ui.SubPua.Text = $(try { $n = @(Get-MpThreatDetection -ErrorAction Stop).Count; "Defender 탐지 기록 $($n)건" } catch { 'Defender 정보 없음' })
 }
-$script:Buttons = @($ui.BtnProtectAll, $ui.BtnSoftonicOn, $ui.BtnSoftonicOff, $ui.BtnBphOn, $ui.BtnBphOff, $ui.BtnPuaOn, $ui.BtnPuaOff, $ui.BtnScan, $ui.BtnClean, $ui.BtnReport)
+$script:Buttons = @($ui.BtnUpdate, $ui.BtnProtectAll, $ui.TglSites, $ui.TglBph, $ui.TglPua, $ui.TglRansom, $ui.BtnScan, $ui.BtnClean, $ui.BtnReport)
 function Invoke-Busy([scriptblock]$Work) {
     foreach ($b in $script:Buttons) { $b.IsEnabled = $false }
     $ui.Busy.Visibility = 'Visible'; $script:Window.Cursor = [System.Windows.Input.Cursors]::Wait; Update-Ui
@@ -1103,6 +1885,81 @@ function Show-Results {
     $ui.BtnClean.IsEnabled = ($script:Rows.Count -gt 0)
 }
 
+function Show-Detail([string]$Title, [string]$Intro, $Sections) {
+    [xml]$dx = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Width="960" Height="620" MinWidth="640" MinHeight="400" WindowStartupLocation="CenterOwner" Background="#F3F5FA" FontFamily="Malgun Gothic, Segoe UI" FontSize="13">
+  <Grid Margin="18">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <TextBlock x:Name="DTitle" FontSize="17" FontWeight="Bold" Foreground="#111827"/>
+    <TextBlock x:Name="DIntro" Grid.Row="1" TextWrapping="Wrap" Foreground="#475467" Margin="0,6,0,10"/>
+    <Border Grid.Row="2" Background="White" CornerRadius="12" BorderBrush="#E4E8F2" BorderThickness="1" Padding="8">
+      <DockPanel>
+        <DockPanel DockPanel.Dock="Top" Margin="4,0,4,8">
+          <TextBlock Text="검색" VerticalAlignment="Center" Foreground="#667085" Margin="0,0,8,0"/>
+          <TextBox x:Name="DSearch" Padding="6,3" BorderBrush="#D0D5DD"/>
+        </DockPanel>
+        <TabControl x:Name="DTabs" BorderThickness="0"/>
+      </DockPanel>
+    </Border>
+    <DockPanel Grid.Row="3" Margin="0,12,0,0">
+      <Button x:Name="DClose" DockPanel.Dock="Right" Content="  닫기  " Padding="14,6" Margin="8,0,0,0"/>
+      <Button x:Name="DCsv" DockPanel.Dock="Right" Content="  CSV로 저장  " Padding="14,6"/>
+      <TextBlock x:Name="DCount" Foreground="#98A2B3" VerticalAlignment="Center"/>
+    </DockPanel>
+  </Grid>
+</Window>
+'@
+    $w = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $dx))
+    $w.Title = $Title; $w.Owner = $script:Window
+    $w.FindName('DTitle').Text = $Title; $w.FindName('DIntro').Text = $Intro
+    $tabs = $w.FindName('DTabs'); $search = $w.FindName('DSearch'); $count = $w.FindName('DCount')
+    $views = @{}
+    foreach ($k in $Sections.Keys) {
+        $rows = @($Sections[$k])
+        $tab = New-Object System.Windows.Controls.TabItem; $tab.Header = $k; $tab.Padding = '12,4'
+        if ($rows.Count -eq 0) {
+            $tb = New-Object System.Windows.Controls.TextBlock; $tb.Text = '기록이 없습니다.'; $tb.Margin = '12'; $tb.Foreground = $bc.ConvertFromString('#98A2B3'); $tab.Content = $tb
+        } else {
+            $dt = New-Object System.Data.DataTable
+            $names = @($rows[0].PSObject.Properties.Name)
+            foreach ($pn in $names) { [void]$dt.Columns.Add($pn, [string]) }
+            foreach ($r in $rows) { $dr = $dt.NewRow(); foreach ($pn in $names) { $dr[$pn] = "$($r.$pn)" }; $dt.Rows.Add($dr) }
+            $views[$k] = $dt.DefaultView
+            $dg = New-Object System.Windows.Controls.DataGrid
+            $dg.ItemsSource = $dt.DefaultView; $dg.AutoGenerateColumns = $false; $dg.IsReadOnly = $true; $dg.HeadersVisibility = 'Column'; $dg.GridLinesVisibility = 'Horizontal'
+            $dg.HorizontalGridLinesBrush = $bc.ConvertFromString('#EEF0F4'); $dg.BorderThickness = 0; $dg.RowHeight = 26; $dg.AlternatingRowBackground = $bc.ConvertFromString('#FAFBFD'); $dg.CanUserSortColumns = $true
+            foreach ($pn in $names) {
+                $col = New-Object System.Windows.Controls.DataGridTextColumn; $col.Header = $pn
+                $col.Binding = New-Object System.Windows.Data.Binding("[$pn]")
+                $col.Width = $(if ($pn -in '대상', '이름', '이유', '차단 프로그램', '프로그램', '미끼 파일', '설명', '무엇을 막나', '어떻게', '한계', '내용', '출처', '조치', '예시', '실행 파일', '예외', '경로') { New-Object System.Windows.Controls.DataGridLength(1, 'Star') } else { [System.Windows.Controls.DataGridLength]::Auto })
+                $dg.Columns.Add($col)
+            }
+            $tab.Content = $dg
+        }
+        [void]$tabs.Items.Add($tab)
+    }
+    $refresh = {
+        $q = $search.Text.Trim(); $t = $tabs.SelectedItem; if (-not $t) { return }
+        $v = $views["$($t.Header)"]; if (-not $v) { $count.Text = ''; return }
+        if ($q) {
+            $esc = ($q -replace "'", "''") -replace '([\[\]\*%])', '[$1]'
+            $v.RowFilter = (@($v.Table.Columns | ForEach-Object { "[$($_.ColumnName)] LIKE '%$esc%'" }) -join ' OR ')
+        } else { $v.RowFilter = '' }
+        $count.Text = "표시 $($v.Count)건 / 전체 $($v.Table.Rows.Count)건"
+    }.GetNewClosure()
+    $search.Add_TextChanged($refresh); $tabs.Add_SelectionChanged($refresh)
+    $w.FindName('DClose').Add_Click({ $w.Close() }.GetNewClosure())
+    $w.FindName('DCsv').Add_Click({
+        $t = $tabs.SelectedItem; $v = $views["$($t.Header)"]; if (-not $v) { return }
+        $f = Join-Path ([Environment]::GetFolderPath('Desktop')) ('SC보안점검_{0}_{1:yyyyMMdd_HHmm}.csv' -f (($t.Header -replace '[^\w가-힣]+', '_').Trim('_')), (Get-Date))
+        $v.ToTable() | Select-Object * -ExcludeProperty RowError, RowState, Table, ItemArray, HasErrors | Export-Csv -Path $f -NoTypeInformation -Encoding UTF8
+        [System.Windows.MessageBox]::Show("바탕화면에 저장했습니다.`n$f", $Title) | Out-Null
+    }.GetNewClosure())
+    $tabs.SelectedIndex = 0; & $refresh
+    [void]$w.ShowDialog()
+}
+
 $ui.BtnScan.Add_Click({ Invoke-Busy { [void](Invoke-Scan); Show-Results } })
 $ui.ChkSusp.Add_Click({ foreach ($r in $script:Rows) { if ($r.Severity -eq '의심') { $r.Selected = [bool]$ui.ChkSusp.IsChecked } } })
 $ui.BtnClean.Add_Click({
@@ -1113,19 +1970,42 @@ $ui.BtnClean.Add_Click({
     Invoke-Busy { Invoke-Clean $sel ([bool]$ui.ChkRestore.IsChecked); Write-Log '제거 후 다시 검사합니다.'; [void](Invoke-Scan); Show-Results }
     if ($script:Rows.Count -eq 0) { [System.Windows.MessageBox]::Show('정리가 끝났습니다. 남은 항목이 없습니다.', $AppTitle, 'OK', 'Information') | Out-Null }
 })
-$ui.BtnProtectAll.Add_Click({ Invoke-Busy { Install-Self; Set-SoftonicBlock $true; Set-BphBlock $true; Set-PuaProtection $true } })
-$ui.BtnSoftonicOn.Add_Click({ Invoke-Busy { Set-SoftonicBlock $true } })
-$ui.BtnSoftonicOff.Add_Click({ Invoke-Busy { Set-SoftonicBlock $false } })
-$ui.BtnBphOn.Add_Click({ Invoke-Busy { Set-BphBlock $true } })
-$ui.BtnBphOff.Add_Click({ Invoke-Busy { Set-BphBlock $false } })
-$ui.BtnPuaOn.Add_Click({ Invoke-Busy { Set-PuaProtection $true } })
-$ui.BtnPuaOff.Add_Click({ Invoke-Busy { Set-PuaProtection $false } })
+$ui.BtnProtectAll.Add_Click({ Invoke-Busy { Install-Self; Set-SiteBlock $true; Set-BphBlock $true; Set-PuaProtection $true; Set-RansomProtection $true } })
+# 토글: 클릭한 뒤의 IsChecked = 원하는 상태. 적용 후 Update-Status가 실제 상태로 다시 맞춘다(실패하면 되돌아감).
+$ui.TglSites.Add_Click({ $on = [bool]$ui.TglSites.IsChecked; Invoke-Busy { Set-SiteBlock $on } })
+$ui.TglBph.Add_Click({
+    $on = [bool]$ui.TglBph.IsChecked
+    if (-not $on -and [System.Windows.MessageBox]::Show("방탄호스팅 통신 차단을 끄면 공격 서버와의 통신이 다시 허용됩니다.`n끌까요?", $AppTitle, 'YesNo', 'Warning') -ne 'Yes') { Update-Status; return }
+    Invoke-Busy { Set-BphBlock $on }
+})
+$ui.TglPua.Add_Click({ $on = [bool]$ui.TglPua.IsChecked; Invoke-Busy { Set-PuaProtection $on } })
+$ui.TglRansom.Add_Click({
+    $on = [bool]$ui.TglRansom.IsChecked
+    if (-not $on -and [System.Windows.MessageBox]::Show("랜섬웨어 보호를 끄면 미끼 파일 감시와 폴더 보호가 꺼집니다.`n끌까요?", $AppTitle, 'YesNo', 'Warning') -ne 'Yes') { Update-Status; return }
+    Invoke-Busy { Set-RansomProtection $on }
+})
+$showHealth = { $script:Window.Cursor = [System.Windows.Input.Cursors]::Wait; try { $d = Get-HealthDetail } finally { $script:Window.Cursor = $null }; Show-Detail 'PC 보안 상태 — Windows Defender·예외 폴더' $d.Intro $d.Sections; Update-Banner }
+$ui.BtnHealth.Add_Click($showHealth)
+$ui.BtnHealthBanner.Add_Click($showHealth)
+$ui.BtnCoverage.Add_Click({ $d = Get-CoverageDetail; Show-Detail '무엇을 막나요? — 보호 범위·목록·출처' $d.Intro $d.Sections })
+$ui.BtnRansomDetail.Add_Click({ $d = Get-RansomDetail; Show-Detail '랜섬웨어 보호 — 상태·경고' $d.Intro $d.Sections })
+$ui.BtnSitesDetail.Add_Click({ Show-Detail '위험 사이트 차단 — 차단 사이트' '끼워팔기 다운로드 사이트와 보안관제가 확인한 악성 서버 도메인을 브라우저 정책으로 막습니다. 하위 도메인까지 함께 막힙니다.' ([ordered]@{ '차단 사이트' = @(Get-SiteDetail) }) })
+$ui.BtnBphDetail.Add_Click({ $script:Window.Cursor = [System.Windows.Input.Cursors]::Wait; try { $d = Get-BphDetail } finally { $script:Window.Cursor = $null }; Show-Detail '방탄호스팅 통신 차단 — 차단 기록·대역' $d.Intro $d.Sections })
+$ui.BtnPuaDetail.Add_Click({ $d = Get-PuaDetail; Show-Detail '원치 않는 앱(PUA) 차단 — 탐지 내역' $d.Intro $d.Sections })
 $ui.BtnFolder.Add_Click({ Start-Process explorer.exe $DataDir })
+$ui.BtnUpdate.Add_Click({
+    $r = $null
+    Invoke-Busy { $script:UpdResult = Invoke-AutoUpdate }
+    $r = $script:UpdResult
+    if ($r.Self) { [System.Windows.MessageBox]::Show('새 버전을 설치했습니다. 홈가드를 닫았다가 다시 열면 적용됩니다.', $AppTitle, 'OK', 'Information') | Out-Null }
+    elseif ($r.Db) { [System.Windows.MessageBox]::Show('위협 목록을 최신으로 갱신해 보호 설정에 반영했습니다.', $AppTitle, 'OK', 'Information') | Out-Null }
+    Update-Footer
+})
 $ui.BtnReport.Add_Click({
     $file = Join-Path ([Environment]::GetFolderPath('Desktop')) ('SC보안점검_결과_{0:yyyyMMdd_HHmm}.txt' -f (Get-Date))
     $s = Get-ProtectionStatus
     $lines = @("$AppTitle $Version", "PC: $env:COMPUTERNAME  사용자: $env:USERNAME  시각: $(Get-Date -Format 'yyyy-MM-dd HH:mm')", '',
-        '[보호 설정]', ("Softonic 차단: {0} / 방탄호스팅 차단: {1} / PUA 차단: {2}" -f $s.Softonic, $s.Bph, $s.Pua), '',
+        '[보호 설정]', ("위험 사이트 차단: {0} / 방탄호스팅 차단: {1} / PUA 차단: {2} / 랜섬웨어 보호: {3}" -f $s.Sites, $s.Bph, $s.Pua, $s.Ransom), '',
         "[검사 결과] $($script:Rows.Count)건")
     foreach ($r in $script:Rows) { $lines += ("{0} | {1} | {2} | {3} | {4}" -f $r.Severity, $r.Product, $r.Kind, $r.Target, $r.Detail) }
     $lines += '', '[작업 기록]', $ui.TxtLog.Text
@@ -1137,8 +2017,11 @@ $script:Window.Add_ContentRendered({
     Install-Self
     Remove-LegacyHosts
     Update-Status
+    Update-Footer
+    Update-Banner
     $st = Get-State
+    if ($st.LastSelfUpdate) { Write-Log ("자동 업데이트: {0} → {1} ({2})" -f $st.LastSelfUpdate.From, $st.LastSelfUpdate.To, $st.LastSelfUpdate.Time) }
     if ($st.LastScan) { Write-Log ("지난 검사: {0} (위험 {1}, 의심 {2})" -f $st.LastScan.Time, $st.LastScan.Danger, $st.LastScan.Suspicious) }
-    Write-Log '왼쪽 [모두 켜기]로 보호를 켜고, 오른쪽 [검사 시작]으로 프록시웨어를 찾으세요.'
+    Write-Log '왼쪽 [모두 켜기]로 보호를 켜고, 오른쪽 [검사 시작]으로 프록시웨어·랜섬웨어 흔적을 찾으세요.'
 })
-[void]$script:Window.ShowDialog()
+try { [void]$script:Window.ShowDialog() } catch { Stop-GuiWithError $_ }

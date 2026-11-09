@@ -8,10 +8,10 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <LangVersion>7.3</LangVersion>
     <Nullable>disable</Nullable>
-    <Product>SuperCreative 홈 PC 보안 점검</Product>
+    <Product>슈크인 홈 PC 프로텍터</Product>
     <Company>SuperCreative SOC</Company>
-    <Description>프록시웨어 검사·제거, Softonic·방탄호스팅 차단</Description>
-    <Version>1.1.0</Version>
+    <Description>슈크인 개인 집 PC 전용 보안 점검: 프록시웨어·위험 사이트·방탄호스팅·랜섬웨어</Description>
+    <Version>1.2.0</Version>
     <Copyright>SuperCreative 2026</Copyright>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <DebugType>none</DebugType>
